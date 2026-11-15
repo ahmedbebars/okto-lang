@@ -1,0 +1,25 @@
+# A small website in Okto 0.5.
+# Run from the project folder:  okto run examples/web.ok
+# Then open http://127.0.0.1:8080 in a browser. Stop it with Ctrl+C.
+
+# The program may serve on this one address, and nowhere else.
+allow serve "127.0.0.1:8080"
+
+var visits = 0
+
+fn home(name: text) -> html:
+    # Values inside html("...") are escaped: a name like <script> shows as text.
+    let page = html("<h1>Hello, {name}!</h1><p>This page was opened {visits} times.</p>")
+    return page + html("<form action=\"/\"><input name=\"name\"><button>Say hello</button></form>")
+
+fn handle(req: Request) -> Response:
+    visits = visits + 1
+    if req.path == "/":
+        let name = req.query["name"] ?? "world"
+        return Response(status: 200, type: "text/html; charset=utf-8", body: to_text(home(name)))
+    if req.path == "/api/visits":
+        return Response(status: 200, type: "application/json", body: "{{\"visits\": {visits}}}")
+    return Response(status: 404, type: "text/plain; charset=utf-8", body: "not found\n")
+
+# serve() answers every request with handle(). It is always the last line.
+serve("127.0.0.1:8080", handle)

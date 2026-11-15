@@ -417,6 +417,79 @@ CASES = [
         'var a = [1]\nlet o: list[int]? = none\nvar b = o ?? a\npush(b, 2)\nprint(a, b)\n',
         '[1] [1, 2]',
     ),
+    (
+        'html escapes values',
+        'let n = "<b x=\'1\'>&\\""\nlet a = html("<p>{n} {3} {true}</p>")\nlet b = a + html("<div>{a}</div>")\n'
+        'print(to_text(b))\nprint(b)\n',
+        '<p>&lt;b x=&#39;1&#39;&gt;&amp;&quot; 3 true</p><div><p>&lt;b x=&#39;1&#39;&gt;&amp;&quot; 3 true</p></div>\n'
+        '<p>&lt;b x=&#39;1&#39;&gt;&amp;&quot; 3 true</p><div><p>&lt;b x=&#39;1&#39;&gt;&amp;&quot; 3 true</p></div>',
+    ),
+    (
+        'html as a function result',
+        'fn card(t: text) -> html:\n    return html("<li>{t}</li>")\nvar page = html("<ul>")\nfor t in ["a", "<b>"]:\n'
+        '    page = page + card(t)\nprint(to_text(page + html("</ul>")))\n',
+        '<ul><li>a</li><li>&lt;b&gt;</li></ul>',
+    ),
+    ('html from a value', 'let t = "<b>"\nlet h = html(t)\n', ['E147']),
+    ('html plus text', 'let h = html("<b>") + "<i>"\n', ['E107']),
+    ('html with an optional value', 'let d = {"a": "b"}\nlet h = html("{d["a"]}")\n', ['E106']),
+    ('html with a list', 'let h = html("{[1, 2]}")\n', ['E102']),
+    (
+        'html with a secret',
+        'allow env "K"\nlet k = secret_env("K")\nif k != none:\n    let h = html("{k}")\n',
+        ['E141'],
+    ),
+    (
+        'request and response are plain records',
+        'fn h(r: Request) -> Response:\n    return Response(status: 201, type: "text/plain", body: r.method + r.path)\n'
+        'let q = Request(method: "GET", path: "/a", query: {"x": "1"}, headers: {}, body: "")\nlet res = h(q)\n'
+        'print(res.status, res.body, q.query["x"] ?? "-")\n',
+        '201 GET/a 1',
+    ),
+    ('Request is taken', 'record Request:\n    a: int\n', ['E123']),
+    (
+        'serve needs permission',
+        'fn h(r: Request) -> Response:\n    return Response(status: 200, type: "t", body: "")\nserve("127.0.0.1:1", h)\n',
+        ['E140'],
+    ),
+    ('serve needs a handler', 'allow serve "*"\nserve("127.0.0.1:1", 3)\n', ['E145']),
+    (
+        'serve handler of the wrong shape',
+        'allow serve "*"\nfn h(r: text) -> Response:\n    return Response(status: 200, type: "t", body: "")\n'
+        'serve("127.0.0.1:1", h)\n',
+        ['E145'],
+    ),
+    (
+        'serve is the last line',
+        'allow serve "*"\nfn h(r: Request) -> Response:\n    return Response(status: 200, type: "t", body: "")\n'
+        'serve("127.0.0.1:1", h)\nprint(1)\n',
+        ['E146'],
+    ),
+    (
+        'serve only at the top level',
+        'allow serve "*"\nfn h(r: Request) -> Response:\n    return Response(status: 200, type: "t", body: "")\n'
+        'if true:\n    serve("127.0.0.1:1", h)\n',
+        ['E146'],
+    ),
+    (
+        'serve address not allowed',
+        'allow serve "127.0.0.1:9"\nfn h(r: Request) -> Response:\n    return Response(status: 200, type: "t", body: "")\n'
+        'serve("127.0.0.1:1", h)\n',
+        ('runtime', "line 4: serving on '127.0.0.1:1' is not allowed"),
+    ),
+    (
+        'serve address must be host and port',
+        'allow serve "*"\nfn h(r: Request) -> Response:\n    return Response(status: 200, type: "t", body: "")\n'
+        'serve("127.0.0.1:70000", h)\n',
+        ('runtime', "line 4: the address '127.0.0.1:70000' must look like 127.0.0.1:8080"),
+    ),
+    (
+        'arabic web words',
+        'دالة بطاقة(س: نص) -> صفحة_ويب:\n    ارجع صفحة_ويب("<b>{س}</b>")\n'
+        'دالة رد(ط: طلب) -> استجابة:\n    ارجع Response(status: 200, type: "t", body: to_text(بطاقة(ط.path)))\n'
+        'ثابت ر = رد(Request(method: "GET", path: "<x>", query: {}, headers: {}, body: ""))\nاطبع(ر.body)\n',
+        '<b>&lt;x&gt;</b>',
+    ),
 ]
 
 

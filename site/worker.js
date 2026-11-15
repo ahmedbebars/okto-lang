@@ -8,11 +8,11 @@ let compile = null;
 
 async function boot() {
   const { loadPyodide } = await import(PYODIDE + "pyodide.mjs");
-  const manifest = await (await fetch("manifest.json")).json();
+  const manifest = await (await fetch("manifest.json", { cache: "no-cache" })).json();
   const py = await loadPyodide({ indexURL: PYODIDE });
   py.FS.mkdirTree("/okto_site/okto");
   for (const name of manifest.modules) {
-    const text = await (await fetch("okto/" + name)).text();
+    const text = await (await fetch("okto/" + name, { cache: "no-cache" })).text();
     py.FS.writeFile("/okto_site/okto/" + name, text);
   }
   compile = py.runPython(`
@@ -54,6 +54,13 @@ const pathStub = {
 };
 const fsStub = { realpathSync: noFiles, readFileSync: noFiles, writeFileSync: noFiles, appendFileSync: noFiles };
 const cryptoStub = { createHash: () => { throw new Error("secrets are not available in the browser"); } };
+const httpStub = {
+  createServer: () => {
+    const e = new Error("runtime error: a web server cannot run in the browser. Install Okto and use: okto run file.ok");
+    e.okto = true;
+    throw e;
+  },
+};
 
 function execute(code) {
   const out = [];
@@ -66,12 +73,15 @@ function execute(code) {
   };
   const fakeConsole = { log: (...v) => add("out", v), error: (...v) => add("err", v) };
   const fakeProcess = { platform: "linux", env: {}, argv: ["okto", "main.ok"], exit: (c) => { status = c; throw EXIT; } };
-  const fakeRequire = (name) => ({ fs: fsStub, path: pathStub, crypto: cryptoStub })[name];
+  const fakeRequire = (name) => ({ fs: fsStub, path: pathStub, crypto: cryptoStub, http: httpStub })[name];
   try {
     new Function("require", "process", "console", code)(fakeRequire, fakeProcess, fakeConsole);
   } catch (e) {
     if (e === LIMIT) {
       out.push({ kind: "note", text: "(stopped: more than " + MAX_LINES + " lines of output)" });
+      status = 1;
+    } else if (e && e.okto === true) {
+      out.push({ kind: "err", text: e.message });
       status = 1;
     } else if (e !== EXIT) {
       out.push({ kind: "err", text: "internal error: " + e });

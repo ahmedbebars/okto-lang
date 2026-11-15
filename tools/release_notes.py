@@ -34,7 +34,8 @@ def main(argv):
         with open(argv[1], 'w', encoding='utf-8', newline='\n') as f:
             f.write(text + '\n')
     else:
-        print(text)
+        # UTF-8 on every system: the notes can hold Arabic words, which a Windows console code page cannot show.
+        sys.stdout.buffer.write((text + '\n').encode('utf-8'))
     return 0
 
 

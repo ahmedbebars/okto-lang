@@ -6,9 +6,14 @@ Options: --node (skip Go), --require-go (fail when Go is missing; used in CI).""
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+import urllib.error
+import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -134,6 +139,153 @@ def test_examples_are_the_same_on_node_and_go(work):
     assert err.startswith('runtime error: line 26: reading the file'), err
 
 
+WEB_TEST = """allow serve "ADDR"
+var hits = 0
+fn handle(req: Request) -> Response:
+    hits = hits + 1
+    if req.path == "/echo":
+        let kind = req.headers["content-type"] ?? "-"
+        return Response(status: 200, type: "text/plain; charset=utf-8", body: req.method + " " + kind + " " + req.body)
+    if req.path == "/boom":
+        let xs = [1]
+        print(xs[3])
+    if req.path == "/bad-status":
+        return Response(status: 99, type: "text/plain", body: "")
+    if req.path != "/":
+        return Response(status: 404, type: "text/plain; charset=utf-8", body: "not found: " + req.path)
+    let name = req.query["name"] ?? "world"
+    return Response(status: 200, type: "text/html; charset=utf-8", body: to_text(html("<b>{name}</b> {hits}")))
+serve("ADDR", handle)
+"""
+WEB_REQUESTS = [
+    ('/', None),
+    ('/?name=%3Cscript%3E&name=last', None),
+    ('/echo', b'hello'),
+    ('/caf%C3%A9', None),
+    ('/boom', None),
+    ('/bad-status', None),
+    ('/', None),
+    ('/echo', b'x' * (1024 * 1024 + 1)),
+]
+SAFETY_HEADERS = {'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY'}
+
+
+def free_address():
+    with socket.socket() as s:
+        s.bind(('127.0.0.1', 0))
+        return '127.0.0.1:%d' % s.getsockname()[1]
+
+
+def ask(base, path, data):
+    req = urllib.request.Request(base + path, data=data)  # noqa: S310 (always http://127.0.0.1 from this test)
+    if data is not None:
+        req.add_header('Content-Type', 'text/plain')
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:  # noqa: S310 (same local address)
+            status, headers, body = r.status, r.headers, r.read()
+    except urllib.error.HTTPError as e:
+        status, headers, body = e.code, e.headers, e.read()
+    for k, v in SAFETY_HEADERS.items():
+        same(headers.get(k), v)
+    return status, headers.get('content-type'), body.decode('utf-8')
+
+
+def serve_and_ask(cmd, addr, requests):
+    """Starts a web program, sends the requests, stops it.
+    Returns (first line, answers, what it wrote to stderr)."""
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8')
+    errors = []
+    reader = threading.Thread(target=lambda: errors.extend(p.stderr), daemon=True)
+    reader.start()
+    first = []
+    waiter = threading.Thread(target=lambda: first.append(p.stdout.readline()), daemon=True)
+    waiter.start()
+    waiter.join(30)
+    try:
+        assert first and first[0], 'the server did not start: %r' % errors
+        answers = [ask('http://' + addr, path, data) for path, data in requests]
+        deadline = time.time() + 10
+        while len(errors) < 2 and time.time() < deadline:
+            time.sleep(0.05)
+    finally:
+        p.kill()
+        p.wait(10)
+    reader.join(10)
+    return first[0], answers, ''.join(errors)
+
+
+def check_web_answers(first, answers, err, addr):
+    same(first, 'serving on http://%s\n' % addr)
+    html_type, text_type = 'text/html; charset=utf-8', 'text/plain; charset=utf-8'
+    same(
+        answers,
+        [
+            (200, html_type, '<b>world</b> 1'),
+            (200, html_type, '<b>last</b> 2'),
+            (200, text_type, 'POST text/plain hello'),
+            (404, text_type, 'not found: /café'),
+            (500, text_type, 'internal server error\n'),
+            (500, text_type, 'internal server error\n'),
+            (200, html_type, '<b>world</b> 7'),
+            (413, text_type, 'request body too large\n'),
+        ],
+    )
+    same(
+        err,
+        'runtime error: line 10: index 3 is outside the list (size 1)\n'
+        'runtime error: line 17: the response status 99 is not between 100 and 599\n',
+    )
+
+
+def web_program(work):
+    addr = free_address()
+    path = os.path.join(work, 'site.ok')
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(WEB_TEST.replace('ADDR', addr))
+    return addr, path
+
+
+def test_web_server_on_node(work):
+    addr, path = web_program(work)
+    out_js = os.path.join(work, 'site.js')
+    same(okto('build', '--js', path, '-o', out_js), (0, out_js + '\n', ''))
+    check_web_answers(*serve_and_ask(['node', out_js], addr, WEB_REQUESTS), addr)
+    # The example site, on a free port.
+    addr = free_address()
+    with open(os.path.join(ROOT, 'examples', 'web.ok'), encoding='utf-8') as f:
+        example = f.read().replace('127.0.0.1:8080', addr)
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(example)
+    same(okto('build', '--js', path, '-o', out_js), (0, out_js + '\n', ''))
+    _, answers, err = serve_and_ask(['node', out_js], addr, [('/?name=%3Ci%3E', None), ('/api/visits', None)])
+    same(err, '')
+    assert answers[0][2].startswith('<h1>Hello, &lt;i&gt;!</h1>'), answers[0]
+    same(answers[1], (200, 'application/json', '{"visits": 2}'))
+
+
+def test_web_server_is_the_same_on_go(work):
+    addr, path = web_program(work)
+    exe = os.path.join(work, 'site' + EXE)
+    same(okto('build', path, '-o', exe), (0, exe + '\n', ''))
+    check_web_answers(*serve_and_ask([exe], addr, WEB_REQUESTS), addr)
+
+
+def test_serve_on_a_busy_address(work):
+    with socket.socket() as busy:
+        busy.bind(('127.0.0.1', 0))
+        busy.listen()
+        addr = '127.0.0.1:%d' % busy.getsockname()[1]
+        path = os.path.join(work, 'busy.ok')
+        with open(path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(WEB_TEST.replace('ADDR', addr))
+        want = (
+            "runtime error: line 17: cannot serve on '%s' (the address is in use, or not available on this machine)\n"
+        )
+        same(okto('run', path), (1, '', want % addr))
+        if WITH_GO:
+            same(okto('run', '--go', path), (1, '', want % addr))
+
+
 TESTS = [
     test_version,
     test_usage,
@@ -145,8 +297,10 @@ TESTS = [
     test_nothing_runs_when_the_check_fails,
     test_values_reach_the_program,
     test_build_javascript,
+    test_web_server_on_node,
+    test_serve_on_a_busy_address,
 ]
-GO_TESTS = [test_build_native_program, test_examples_are_the_same_on_node_and_go]
+GO_TESTS = [test_build_native_program, test_examples_are_the_same_on_node_and_go, test_web_server_is_the_same_on_go]
 
 
 def main():

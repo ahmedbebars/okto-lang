@@ -12,8 +12,37 @@ TYPE_ALIASES = {
     'قاموس': 'dict',
     'سر': 'secret',
     'استعلام': 'sql',
+    'صفحة_ويب': 'html',
+    'طلب': 'Request',
+    'استجابة': 'Response',
 }
-ALLOW_KINDS = {'read': 'read', 'write': 'write', 'env': 'env', 'قراءة': 'read', 'كتابة': 'write', 'بيئة': 'env'}
+TYPE_ALIASES = {norm(k): v for k, v in TYPE_ALIASES.items()}
+ALLOW_KINDS = {
+    'read': 'read',
+    'write': 'write',
+    'env': 'env',
+    'serve': 'serve',
+    'قراءة': 'read',
+    'كتابة': 'write',
+    'بيئة': 'env',
+    'استضافة': 'serve',
+}
+ALLOW_KINDS = {norm(k): v for k, v in ALLOW_KINDS.items()}
+
+# Records every program has. A web handler takes a Request and returns a Response.
+BUILTIN_RECORDS = """record Request:
+    method: text
+    path: text
+    query: dict[text, text]
+    headers: dict[text, text]
+    body: text
+
+record Response:
+    status: int
+    type: text
+    body: text
+"""
+
 
 SHOW = {
     'NEWLINE': ('the end of the line', 'نهاية السطر'),
@@ -123,7 +152,10 @@ class Parser:
             if not top:
                 raise OktoError('E143', tok.line, tok.col)
             self.i += 1
-            fix = ('write: allow read "folder"   (or write, or env)', 'اكتب: اسمح قراءة "مجلد"   (أو كتابة، أو بيئة)')
+            fix = (
+                'write: allow read "folder"   (or write, env, serve)',
+                'اكتب: اسمح قراءة "مجلد"   (أو كتابة، بيئة، استضافة)',
+            )
             kind = self.eat('NAME', fix)
             if norm(kind.val) not in ALLOW_KINDS:
                 raise OktoError('E144', kind.line, kind.col, name=kind.val)
@@ -217,10 +249,10 @@ class Parser:
             self.eat(',', fix)
             t = ('dict', kt, self.type())
             self.eat(']')
-        elif name in ('int', 'float', 'text', 'bool', 'secret', 'sql'):
+        elif name in ('int', 'float', 'text', 'bool', 'secret', 'sql', 'html'):
             t = name
         else:
-            t = ('rec', tok.val)
+            t = ('rec', name)
         if self.at('?'):
             self.i += 1
             t = ('opt', t)
@@ -381,3 +413,10 @@ class Parser:
             self.eat('}')
             return N('dict', tok.line, tok.col, items=items)
         raise OktoError('E005', tok.line, tok.col, exp=show('EXPR'), got=show_tok(tok), fix=DEFAULT_FIX)
+
+
+def builtin_records():
+    nodes = Parser(tokenize(BUILTIN_RECORDS)).program()
+    for n in nodes:
+        n.builtin = True
+    return nodes

@@ -6,8 +6,8 @@ Safety is one of Okto's goals, so a weakness in its safety features is treated a
 
 | Version | Supported |
 |---|---|
-| 0.4.x | Yes |
-| below 0.4 | No |
+| 0.5.x | Yes |
+| below 0.5 | No |
 
 ## What counts as a vulnerability
 

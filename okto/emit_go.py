@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+// OKTO_WEB_IMPORTS
 )
 
 type okErr string
@@ -374,7 +375,7 @@ func okInside(target, root string) bool {
 }
 func okPerm(kind, what, target string, line int) {
 	for _, r := range okAllow[kind] {
-		if kind == "env" {
+		if kind == "env" || kind == "serve" {
 			if r == "*" || r == target {
 				return
 			}
@@ -458,11 +459,147 @@ func b_sql_values(q okSql) []Opt[string] {
 	return r
 }
 
+// ---- html: values inside are escaped, so they never add tags ----
+type okHtml struct{ s string }
+
+func (h okHtml) okStr() string { return h.s }
+
+var okEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&#39;")
+
+func okEsc(s string) string        { return okEscaper.Replace(s) }
+func okHtmlCat(a, b okHtml) okHtml { return okHtml{a.s + b.s} }
+
 // ---- the program ----
 """
 
 FRESH = ('call', 'list', 'dict')  # these always produce a new value: no copy needed
-GO_BASIC = {'int': 'int', 'float': 'float64', 'text': 'string', 'bool': 'bool', 'secret': 'okSecret', 'sql': 'okSql'}
+GO_BASIC = {
+    'int': 'int',
+    'float': 'float64',
+    'text': 'string',
+    'bool': 'bool',
+    'secret': 'okSecret',
+    'sql': 'okSql',
+    'html': 'okHtml',
+}
+GO_WEB = r"""
+// ---- the web server ----
+const okMaxBody = 1 << 20
+
+var okWebMu sync.Mutex
+
+func okWebHeaders(w http.ResponseWriter, typ string) {
+	h := w.Header()
+	h.Set("Content-Type", typ)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-Frame-Options", "DENY")
+}
+func okWebFail(w http.ResponseWriter, status int, text string) {
+	okWebHeaders(w, "text/plain; charset=utf-8")
+	w.WriteHeader(status)
+	io.WriteString(w, text)
+}
+func okWebErr(msg string) {
+	okOut.Flush()
+	fmt.Fprintln(os.Stderr, "runtime error: "+msg)
+}
+func okSorted(m map[string]string) *OMap[string, string] {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	vals := make([]string, len(keys))
+	for i, k := range keys {
+		vals[i] = m[k]
+	}
+	return okMap(keys, vals)
+}
+func okCallHandler(h func(R_Request) R_Response, req R_Request) (resp R_Response, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			if e, isOk := r.(okErr); isOk {
+				okWebErr(string(e))
+			} else {
+				okWebErr(fmt.Sprint("internal: ", r))
+			}
+			ok = false
+		}
+	}()
+	return h(req), true
+}
+func okHandle(w http.ResponseWriter, r *http.Request, h func(R_Request) R_Response, line int) {
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, okMaxBody))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			okWebFail(w, 413, "request body too large\n")
+		} else {
+			okWebFail(w, 400, "bad request\n")
+		}
+		return
+	}
+	query := map[string]string{}
+	for k, v := range r.URL.Query() {
+		query[k] = v[len(v)-1]
+	}
+	headers := map[string]string{"host": r.Host}
+	for k, v := range r.Header {
+		headers[strings.ToLower(k)] = strings.Join(v, ", ")
+	}
+	req := R_Request{f_method: r.Method, f_path: r.URL.Path, f_query: okSorted(query), f_headers: okSorted(headers),
+		f_body: strings.ToValidUTF8(string(body), string(utf8.RuneError))}
+	okWebMu.Lock()
+	defer okWebMu.Unlock()
+	resp, ok := okCallHandler(h, req)
+	okOut.Flush()
+	if !ok {
+		okWebFail(w, 500, "internal server error\n")
+		return
+	}
+	bad := ""
+	if resp.f_status < 100 || resp.f_status > 599 {
+		bad = "the response status " + strconv.Itoa(resp.f_status) + " is not between 100 and 599"
+	} else if strings.ContainsAny(resp.f_type, "\r\n") {
+		bad = "the response type must be one line"
+	}
+	if bad != "" {
+		okWebErr("line " + strconv.Itoa(line) + ": " + bad)
+		okWebFail(w, 500, "internal server error\n")
+		return
+	}
+	okWebHeaders(w, resp.f_type)
+	w.WriteHeader(resp.f_status)
+	io.WriteString(w, resp.f_body)
+}
+func okServe(addr string, h func(R_Request) R_Response, line int) {
+	okPerm("serve", "serving on", addr, line)
+	host, port, err := net.SplitHostPort(addr)
+	p, perr := strconv.Atoi(port)
+	if err != nil || perr != nil || p < 0 || p > 65535 || len(port) > 5 || strings.ContainsAny(host, "[]") {
+		okFail(line, "the address '"+addr+"' must look like 127.0.0.1:8080")
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		okFail(line, "cannot serve on '"+addr+"' (the address is in use, or not available on this machine)")
+	}
+	okOut.WriteString("serving on http://" + addr + "\n")
+	okOut.Flush()
+	srv := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { okHandle(w, r, h, line) }),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 16,
+		ErrorLog:          log.New(io.Discard, "", 0),
+	}
+	err = srv.Serve(ln)
+	okFail(line, "the server stopped: "+err.Error())
+}
+"""
+GO_WEB_IMPORTS = '\t"errors"\n\t"io"\n\t"log"\n\t"net"\n\t"net/http"\n\t"sync"\n\t"time"\n'
 
 
 def enc(name):
@@ -497,6 +634,7 @@ class GoEmitter:
     def __init__(self):
         self.lines, self.ind, self.n = [], 0, 0
         self.top = True
+        self.web = False
 
     def w(self, s):
         self.lines.append('\t' * self.ind + s)
@@ -518,7 +656,7 @@ class GoEmitter:
         self.w('func main() {')
         self.ind += 1
         self.w('defer okEnd()')
-        for kind in ('read', 'write', 'env'):
+        for kind in ('read', 'write', 'env', 'serve'):
             values = [gstr(s.value) for s in ast if s.k == 'allow' and s.kind == kind]
             if values:
                 self.w('okAllow[%s] = []string{%s}' % (gstr(kind), ', '.join(values)))
@@ -528,7 +666,10 @@ class GoEmitter:
                 self.stmt(s)
         self.ind -= 1
         self.w('}')
-        return PRELUDE + '\n'.join(self.lines) + '\n'
+        # The web server code (and net/http, which makes the program larger) only when it is used.
+        if self.web:
+            return PRELUDE.replace('// OKTO_WEB_IMPORTS\n', GO_WEB_IMPORTS) + GO_WEB + '\n'.join(self.lines) + '\n'
+        return PRELUDE.replace('// OKTO_WEB_IMPORTS\n', '') + '\n'.join(self.lines) + '\n'
 
     def record(self, s):
         typ = 'R_' + enc(s.name)
@@ -755,6 +896,8 @@ class GoEmitter:
         lhs, r = self.ex(e.l), self.ex(e.r)
         if op == '+' and e.t == 'sql':
             return 'okSqlCat(%s, %s)' % (lhs, r)
+        if op == '+' and e.t == 'html':
+            return 'okHtmlCat(%s, %s)' % (lhs, r)
         if op == '/' or {lt, rt} == {'int', 'float'}:
             lhs = self.conv(lhs, lt, 'float')
             r = self.conv(r, rt, 'float')
@@ -804,6 +947,19 @@ class GoEmitter:
                 else:
                     parts.append('okP(okSome(str(%s)))' % self.ex(p[1]))
             return 'okSql{[]okSqlPart{%s}}' % ', '.join(parts)
+        if b == 'html':
+            bits = []
+            for p in e.args[0].parts:
+                if p[0] == 's':
+                    bits.append(gstr(p[1]))
+                elif p[1].t == 'html':
+                    bits.append('(%s).s' % self.ex(p[1]))
+                else:
+                    bits.append('okEsc(str(%s))' % self.ex(p[1]))
+            return 'okHtml{%s}' % (' + '.join(bits) or '""')
+        if b == 'serve':
+            self.web = True
+            return 'okServe(%s, %s, %d)' % (self.c(e.args[0]), self.name(e.handler.name), e.line)
         if b == 'secret_equals':
             other = self.ex(e.args[1])
             return 'okSecretEq(%s, %s)' % (self.ex(e.args[0]), other + '.v' if e.args[1].t == 'secret' else other)
