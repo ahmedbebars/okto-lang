@@ -17,8 +17,8 @@ Keywords in English and Arabic · compiles to JavaScript and to one native progr
 </div>
 
 > [!NOTE]
-> Okto is young (version 0.4). The language works and is tested on two backends, but it has
-> no imports, no network and no database driver yet. See [what is missing](#status-and-limits)
+> Okto is young (version 0.5). The language works and is tested on two backends, and it can
+> serve a simple website, but it has no imports, no outgoing network and no database driver yet. See [what is missing](#status-and-limits)
 > before you plan anything serious on it.
 
 ## Why another language?
@@ -92,6 +92,22 @@ let q = sql("select * from users where name = {name}")
 print(sql_text(q))                # select * from users where name = ?
 print(sql_values(q))              # [x' or 1=1 --]   (the value never joins the query)
 ```
+
+### A small website
+
+```python
+allow serve "127.0.0.1:8080"     # the one address this program may use
+
+fn handle(req: Request) -> Response:
+    let name = req.query["name"] ?? "world"
+    let page = html("<h1>Hello, {name}!</h1>")      # the value is escaped: no injected tags
+    return Response(status: 200, type: "text/html; charset=utf-8", body: to_text(page))
+
+serve("127.0.0.1:8080", handle)
+```
+
+`okto run examples/web.ok`, then open http://127.0.0.1:8080. `okto build` turns the same file
+into one native server program.
 
 ## Quick start
 
@@ -200,12 +216,14 @@ This is one small measurement of plain integer loops, not a general benchmark.
 
 ## Status and limits
 
-What works today (version 0.4): the full checker, records, lists, dicts, text functions, files,
-permissions, secrets, safe queries, both backends, English and Arabic keywords and messages.
+What works today (version 0.5): the full checker, records, lists, dicts, text functions, files,
+permissions, secrets, safe queries, a simple web server with safe html, both backends,
+English and Arabic keywords and messages.
 
 What is not built yet:
 
-- Imports and libraries, network access, a database driver, concurrency, error values.
+- Imports and libraries, outgoing network requests, a database driver, concurrency, error values.
+- The web server has no HTTPS, cookies or file serving yet: put Caddy or nginx in front of a public site.
 - Run-time error messages are in English only.
 - Whole-number results above 2^53 differ between the Node and Go backends.
 - The compiler itself needs Python.

@@ -183,9 +183,27 @@ MSG = {
     ),
     'E144': (
         "unknown permission '{name}'",
-        'use one of: read, write, env',
+        'use one of: read, write, env, serve',
         "صلاحية غير معروفة '{name}'",
-        'استخدم واحدة من: قراءة، كتابة، بيئة',
+        'استخدم واحدة من: قراءة، كتابة، بيئة، استضافة',
+    ),
+    'E145': (
+        'serve needs the name of a function that takes a Request and returns a Response',
+        'write: fn handle(req: Request) -> Response:   then: serve("127.0.0.1:8080", handle)',
+        'الاستضافة تحتاج اسم دالة تأخذ طلباً وترجع استجابة',
+        'اكتب: دالة تعامل(ط: طلب) -> استجابة:   ثم: استضف("127.0.0.1:8080"، تعامل)',
+    ),
+    'E146': (
+        'serve(...) must be the last line of the program, at the top level',
+        'move it to the end of the file, outside any function or block; nothing after it would run',
+        'استضف(...) يجب أن يكون آخر سطر في البرنامج، في المستوى الأعلى',
+        'انقله إلى آخر الملف، خارج أي دالة أو قسم؛ لن يعمل شيء بعده',
+    ),
+    'E147': (
+        'the html must be written here as a text, not taken from a value',
+        'write: html("<p>{{value}}</p>")   values inside {{ }} are escaped, so they can never add tags or scripts',
+        'صفحة الويب يجب أن تُكتب هنا نصاً، لا أن تؤخذ من قيمة',
+        'اكتب: صفحة_ويب("<p>{{القيمة}}</p>")   القيم داخل {{ }} تُهرَّب فلا تضيف وسوماً أو سكربتات أبداً',
     ),
 }
 

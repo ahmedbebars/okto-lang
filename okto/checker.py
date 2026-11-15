@@ -41,13 +41,21 @@ PERMS = {
     'append_file': 'write',
     'env': 'env',
     'secret_env': 'env',
+    'serve': 'serve',
 }
 PERM_TEXT = {
     'read': (('read files', 'قراءة الملفات'), ('allow read "folder"', 'اسمح قراءة "مجلد"')),
     'write': (('write files', 'كتابة الملفات'), ('allow write "folder"', 'اسمح كتابة "مجلد"')),
     'env': (('read environment values', 'قراءة قيم البيئة'), ('allow env "NAME"', 'اسمح بيئة "NAME"')),
+    'serve': (
+        ('serve web requests', 'استقبال طلبات الويب'),
+        ('allow serve "127.0.0.1:8080"', 'اسمح استضافة "127.0.0.1:8080"'),
+    ),
 }
 SQL_PARAM = ('int', 'float', 'text', 'bool')
+# The records every program has (okto/parser.py), with their Arabic names.
+REC_ALIASES = {'Request': 'Request', 'Response': 'Response', 'طلب': 'Request', 'استجابة': 'Response'}
+WEB_REQUEST, WEB_RESPONSE = ('rec', 'Request'), ('rec', 'Response')
 SPECIAL_SIG = {
     'len': 'len(list_or_text_or_dict)',
     'push': 'push(list, item)',
@@ -60,6 +68,8 @@ SPECIAL_SIG = {
     'sort': 'sort(list)',
     'secret_equals': 'secret_equals(secret, text)',
     'sql': 'sql("select ... where id = {value}")',
+    'html': 'html("<p>{value}</p>")',
+    'serve': 'serve("127.0.0.1:8080", handle)',
 }
 AR_BUILTINS = {
     'اطبع': 'print',
@@ -96,10 +106,15 @@ AR_BUILTINS = {
     'نص_الاستعلام': 'sql_text',
     'نص_الاستعلام_مرقم': 'sql_text_numbered',
     'قيم_الاستعلام': 'sql_values',
+    'صفحة_ويب': 'html',
+    'استضف': 'serve',
 }
 EN_BUILTINS = ['print', *list(SPECIAL_SIG), *list(SIMPLE)]
 BUILTINS = dict(AR_BUILTINS)
 BUILTINS.update((n, n) for n in EN_BUILTINS)
+BUILTINS = {norm(k): v for k, v in BUILTINS.items()}
+# The built-in record names cannot be reused either.
+RESERVED = set(BUILTINS) | {norm(k) for k in REC_ALIASES}
 
 
 def is_opt(t):
@@ -245,7 +260,9 @@ class Checker:
         self.fn_calls = {}  # function -> functions it calls
         self.sites = []  # top-level calls: (function, node, globals defined so far)
         self.nglobals = 0
-        self.allow = {'read': [], 'write': [], 'env': []}
+        self.allow = {'read': [], 'write': [], 'env': [], 'serve': []}
+        self.serve_node = None
+        self.serve_bad = False
 
     def err(self, code, node, **args):
         self.errors.append(OktoError(code, node.line, node.col, **args))
@@ -301,7 +318,7 @@ class Checker:
         return None
 
     def declare(self, node, name, t, mutable, kind):
-        if norm(name) in BUILTINS:
+        if norm(name) in RESERVED:
             self.err('E123', node, name=name)
             return
         prev = self.taken(name)
@@ -338,7 +355,7 @@ class Checker:
                 self.allow[s.kind].append(s.value)
         for s in ast:
             if s.k in ('fn', 'record'):
-                if norm(s.name) in BUILTINS:
+                if norm(s.name) in RESERVED and not getattr(s, 'builtin', False):
                     self.err('E123', s, name=s.name)
                 elif self.taken(s.name) is not None:
                     self.err('E104', s, name=s.name, prev=self.taken(s.name))
@@ -368,6 +385,13 @@ class Checker:
         for s in ast:
             if s.k not in ('fn', 'record'):
                 self.stmt(s)
+        top = [s for s in ast if s.k not in ('fn', 'record', 'allow')]
+        if (
+            self.serve_node is not None
+            and not self.serve_bad
+            and (top[-1].k != 'expr' or top[-1].e is not self.serve_node)
+        ):
+            self.err('E146', self.serve_node)
         for s in ast:
             if s.k == 'fn' and self.fns.get(s.name) is s:
                 self.check_fn(s)
@@ -612,7 +636,7 @@ class Checker:
         self.unnarrow(assigned(s.body))
         self.unnarrow_globals()
         pre = {}
-        if norm(s.name) in BUILTINS:
+        if norm(s.name) in RESERVED:
             self.err('E123', s, name=s.name)
         elif self.taken(s.name) is not None:
             self.err('E104', s, name=s.name, prev=self.taken(s.name))
@@ -915,8 +939,8 @@ class Checker:
         if 'error' in (lt, rt):
             return 'bool' if compare else 'error'
         both = ('%s and %s' % (tstr(lt), tstr(rt)), '%s و %s' % (tstr(lt), tstr(rt)))
-        if op == '+' and lt == 'sql' and rt == 'sql':
-            return 'sql'
+        if op == '+' and lt == rt and lt in ('sql', 'html'):
+            return lt
         if lt != 'none' and rt != 'none':
             if 'secret' in (bare(lt), bare(rt)):
                 self.err(
@@ -936,6 +960,18 @@ class Checker:
                     hint=(
                         'queries can only be joined: sql("...") + sql("...")',
                         'الاستعلامات تُضم فقط: استعلام("...") + استعلام("...")',
+                    ),
+                )
+                return 'bool' if compare else 'error'
+            if 'html' in (bare(lt), bare(rt)):
+                self.err(
+                    'E107',
+                    e,
+                    op=op,
+                    types=both,
+                    hint=(
+                        'html can only be joined with html: html("...") + html("...")',
+                        'صفحة الويب تُضم فقط مع صفحة ويب: صفحة_ويب("...") + صفحة_ويب("...")',
                     ),
                 )
                 return 'bool' if compare else 'error'
@@ -1020,8 +1056,8 @@ class Checker:
         elif t != 'error':
             self.err('E102', e, exp=exp, got=tstr(t), hint=hint)
 
-    def construct(self, e):
-        rec = self.recs[e.name]
+    def construct(self, e, name):
+        rec = self.recs[name]
         e.rec = rec
         example = '%s(%s)' % (rec.name, ', '.join('%s: ...' % f[0] for f in rec.fields))
         if e.args:
@@ -1064,7 +1100,9 @@ class Checker:
     def call(self, e):
         e.builtin = e.rec = None
         if e.name in self.recs:
-            return self.construct(e)
+            return self.construct(e, e.name)
+        if norm(e.name) in REC_ALIASES and self.taken(e.name) is None:
+            return self.construct(e, REC_ALIASES[norm(e.name)])
         if e.named:
             self.err(
                 'E127',
@@ -1148,6 +1186,57 @@ class Checker:
                         hint=('a query value must be a simple value', 'قيمة الاستعلام يجب أن تكون قيمة بسيطة'),
                     )
         return 'sql'
+
+    def b_html(self, e):
+        h = e.args[0] if len(e.args) == 1 else None
+        if h is None or h.k != 'str':
+            self.err('E147', h or e)
+            for a in e.args:
+                self.val(a)
+            return 'html'
+        h.t = 'text'
+        for p in h.parts:
+            if p[0] != 'e':
+                continue
+            t = self.val(p[1])
+            if bare(t) == 'secret':
+                self.err('E141', p[1])
+            elif is_opt(t) or t == 'none':
+                self.err_none(p[1])
+            elif t not in (*SQL_PARAM, 'html', 'error'):
+                self.err(
+                    'E102',
+                    p[1],
+                    exp='int / float / text / bool / html',
+                    got=tstr(t),
+                    hint=(
+                        'build the html of a list with a loop: page = page + html("<li>{item}</li>")',
+                        'ابنِ صفحة القائمة بحلقة: الصفحة = الصفحة + صفحة_ويب("<li>{العنصر}</li>")',
+                    ),
+                )
+        return 'html'
+
+    def b_serve(self, e):
+        if self.cur_fn is not None or len(self.scopes) > 1 or self.serve_node is not None:
+            self.err('E146', e)
+            self.serve_bad = True
+        self.serve_node = e
+        e.handler = None
+        if not self.argc(e, 2, sig_of('serve')):
+            return 'void'
+        self.need(e.args[0], 'text')
+        h = e.args[1]
+        f = self.fns.get(h.name) if h.k == 'name' and self.find(h.name) is None else None
+        if f is None or len(f.params) != 1 or f.params[0][1] != WEB_REQUEST or f.ret != WEB_RESPONSE:
+            self.err('E145', h)
+            if h.k != 'name':
+                self.val(h)
+            return 'void'
+        h.t = 'fn'
+        e.handler = f
+        self.sites.append((f.name, e, self.nglobals))
+        self.unnarrow_globals()
+        return 'void'
 
     def b_range(self, e):
         self.err('E124', e)

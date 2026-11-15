@@ -1,4 +1,4 @@
-# Okto v0.4 — complete guide for AI assistants
+# Okto v0.5 — complete guide for AI assistants
 
 This file is the whole language. Read it once and you can write correct Okto.
 Okto is strict on purpose: there is **one way** to do each thing, and the checker
@@ -71,6 +71,8 @@ while total < limit:
 | record name | `Router(name: "x", ping: none)` | every field must be given, by name |
 | `secret` | from `secret_env` / `secret_file` | cannot be printed, compared with `==` or used as text |
 | `sql` | `sql("... {value} ...")` | a query whose values are kept apart from its text |
+| `html` | `html("<b>{name}</b>")` | a piece of a web page; values inside are escaped |
+| `Request`, `Response` | records | the two sides of a web request; see "A web server" |
 | `T?` | a `T` or `none` | "optional"; see below |
 
 ## Operators
@@ -79,6 +81,7 @@ while total < limit:
 |---|---|---|
 | `+ - *` | numbers | `int`, or `float` if either side is `float` |
 | `+` | `text + text` | `text` (text + number is an error: use `"{n}"`) |
+| `+` | `sql + sql`, `html + html` | the same type (a text cannot be added to either) |
 | `/` | numbers | always `float` |
 | `//` `%` | `int`, `int` | `int` (floor division, like Python) |
 | `== !=` | same simple types (not whole lists, dicts or records) | `bool` |
@@ -129,14 +132,15 @@ while total < limit:
 
 ## Safety features
 
-**Permissions.** A program can touch files and environment values only if it says so at
-the top level. Without the line the checker rejects the program (E140). With it, a path
+**Permissions.** A program can touch files and environment values, or answer web requests,
+only if it says so at the top level. Without the line the checker rejects the program (E140). With it, a path
 outside the allowed ones stops the program at run time, including `..` tricks.
 
 ```
 allow read "data"                 # a folder (everything inside it) or one file
 allow write "data/report.txt"
-allow env "API_KEY"               # one name;  "*" means anything, for all three kinds
+allow env "API_KEY"               # one name
+allow serve "127.0.0.1:8080"      # one address;  "*" means anything, for all four kinds
 ```
 
 **Secrets.** `secret_env(name)` and `secret_file(path)` return `secret?`. A secret cannot be
@@ -163,6 +167,61 @@ sql_values(q)           # list[text?]: the values in order, none for NULL
 ```
 
 There is no database connection yet: hand `sql_text` and `sql_values` to the driver when one exists.
+
+## A web server
+
+A program can answer web requests. It needs three things: an `allow serve` line with the
+address, a handler function that takes a `Request` and returns a `Response`, and
+`serve(address, handler)` as the **last top-level line** of the file (E145, E146).
+`serve` prints `serving on http://ADDRESS` and then answers requests until the program is stopped.
+
+```
+allow serve "127.0.0.1:8080"
+
+var visits = 0
+
+fn handle(req: Request) -> Response:
+    visits = visits + 1
+    if req.path != "/":
+        return Response(status: 404, type: "text/plain; charset=utf-8", body: "not found")
+    let name = req.query["name"] ?? "world"
+    let page = html("<h1>Hello, {name}!</h1><p>visit {visits}</p>")
+    return Response(status: 200, type: "text/html; charset=utf-8", body: to_text(page))
+
+serve("127.0.0.1:8080", handle)
+```
+
+Every program has these two records (the names are taken: E123):
+
+```
+record Request:                  record Response:
+    method: text                     status: int        # 100 to 599
+    path: text                       type: text         # the Content-Type
+    query: dict[text, text]          body: text
+    headers: dict[text, text]
+    body: text
+```
+
+- `req.path` is decoded (`/caf%C3%A9` is `/café`) and has no query part.
+- `req.query["name"]` is a `text?`. A name given twice keeps its last value.
+- Header names are lower case: `req.headers["content-type"]`.
+- The body is read as UTF-8 text, up to 1 MB. A larger body gets `413` and the handler is not called.
+- Requests are answered one at a time, so a global `var` is safe to change in the handler.
+- A run-time error inside the handler is written to stderr as `runtime error: ...`, that request
+  gets `500 internal server error`, and the server keeps running. A status outside 100 to 599,
+  or a `type` with a line break, does the same.
+- Every answer carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+  `X-Frame-Options: DENY`.
+- The address is `host:port`. `"127.0.0.1:8080"` answers only this computer; `"0.0.0.0:8080"`
+  answers the network. An address that is not allowed, badly written or already in use stops
+  the program with a run-time error.
+- There is no HTTPS: for a public site, put a reverse proxy such as Caddy or nginx in front.
+- A handler is a normal function: tests can call it with `Request(...)` directly.
+
+**Safe pages.** `html("...")` takes a text written in place (E147), like `sql`. Each `{value}`
+inside is escaped (`& < > " '`), so a value can never add a tag or a script. An `html` value
+inside another `html(...)` is kept as it is, and `html + html` joins two pieces (`html + text`
+is E107). `to_text(page)` gives the text for `Response.body`.
 
 ## Changing things
 
@@ -207,6 +266,8 @@ d["a"] = items                  # then store it back
 | `sql("...")` | `sql` | |
 | `sql_text(q)` `sql_text_numbered(q)` | `text` | |
 | `sql_values(q)` | `list[text?]` | |
+| `html("...")` | `html` | values inside `{ }` are escaped |
+| `serve(address, handler)` | never returns | needs `allow serve`; the last top-level line |
 | `args()` | `list[text]` | values given after the file name on the command line |
 | `range(start, end)` | — | only as the source of a `for` loop |
 
@@ -230,11 +291,13 @@ diacritics are optional (`إذا` = `اذا`). The Arabic comma `،` and Arabic 
 | `while` | `طالما` | `in` | `في` |
 | `for` | `لكل` | `allow` | `اسمح` |
 | `read` | `قراءة` | `write` | `كتابة` |
-| `env` | `بيئة` | | |
+| `env` | `بيئة` | `serve` (in `allow`) | `استضافة` |
 | `int` | `عدد` | `float` | `عشري` |
 | `text` | `نص` | `bool` | `منطقي` |
 | `list` | `قائمة` | `dict` | `قاموس` |
 | `secret` | `سر` | `sql` | `استعلام` |
+| `html` | `صفحة_ويب` | `serve` | `استضف` |
+| `Request` | `طلب` | `Response` | `استجابة` |
 | `print` | `اطبع` | `len` | `طول` |
 | `range` | `مدى` | `push` | `أضف` |
 | `remove` | `احذف` | `keys` | `مفاتيح` |
@@ -279,13 +342,17 @@ diacritics are optional (`إذا` = `اذا`). The Arabic comma `،` and Arabic 
 | E132 | dict key type is not `text` or `int` |
 | E133 | a record holds itself directly (make the field optional or a list) |
 | E134 | whole number too large |
-| E140 | file or environment access without an `allow` line |
+| E140 | file, environment or web access without an `allow` line |
 | E141 | a secret shown or turned into text |
 | E142 | `sql(...)` given a value instead of a text written in place |
 | E143, E144 | `allow` inside a block / unknown permission kind |
+| E145 | `serve` given something other than a function that takes a `Request` and returns a `Response` |
+| E146 | `serve` is not the last top-level line, or is used twice or inside a block |
+| E147 | `html(...)` given a value instead of a text written in place |
 
-## Not in v0.4 yet (do not use)
+## Not in v0.5 yet (do not use)
 
 Modules and imports, methods (`x.y()`), error values, concurrency, lambdas, classes,
-network and database access, reading keyboard input, sorting records.
+outgoing network requests, database access, HTTPS, cookies and sessions, serving files
+from a folder, reading keyboard input, sorting records.
 Results of int maths above 2^53 differ between the Node and Go backends.

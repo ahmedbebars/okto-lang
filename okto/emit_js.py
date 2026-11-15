@@ -63,7 +63,8 @@ function $inside(target, root) {
   return t === r || t.startsWith(r.endsWith($path.sep) ? r : r + $path.sep);
 }
 function $perm(kind, what, target, line) {
-  const ok = $allow[kind].some((r) => (kind === "env" ? r === "*" || r === target : $inside(target, r)));
+  const exact = kind === "env" || kind === "serve";
+  const ok = $allow[kind].some((r) => (exact ? r === "*" || r === target : $inside(target, r)));
   if (!ok) throw new $Err("line " + line + ": " + what + " '" + target + "' is not allowed by this program's permissions");
 }
 class $Secret {
@@ -89,6 +90,77 @@ const $sqlcat = (a, b) => new $Sql(a.parts.concat(b.parts));
 const $b_sql_text = (q) => q.parts.map((x) => (typeof x === "string" ? x : "?")).join("");
 const $b_sql_text_numbered = (q) => { let n = 0; return q.parts.map((x) => (typeof x === "string" ? x : "$" + ++n)).join(""); };
 const $b_sql_values = (q) => q.parts.filter((x) => typeof x !== "string").map((x) => x.p);
+class $Html {
+  constructor(s) { this.s = s; }
+  $c() { return this; }
+  $t() { return this.s; }
+}
+const $esc = (v) => $s(v).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+const $htmlcat = (a, b) => new $Html(a.s + b.s);
+const $MAX_BODY = 1048576;
+function $webHeaders(type) {
+  return { "Content-Type": type, "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer", "X-Frame-Options": "DENY" };
+}
+function $webFail(res, status, text) {
+  res.writeHead(status, $webHeaders("text/plain; charset=utf-8"));
+  res.end(text);
+}
+function $webError(e) {
+  if (e instanceof $Err) return e.message;
+  if (e instanceof RangeError) return "too many nested calls (endless recursion?)";
+  return "internal: " + e;
+}
+function $serve(addr, handler, makeRequest, line) {
+  $perm("serve", "serving on", addr, line);
+  const m = /^(\[[^\]]*\]|[^:\[\]]*):(\d{1,5})$/.exec(addr);
+  if (!m || Number(m[2]) > 65535) throw new $Err("line " + line + ": the address '" + addr + "' must look like 127.0.0.1:8080");
+  const host = m[1].replace(/^\[|\]$/g, "") || undefined;
+  const http = require("http");
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    let size = 0;
+    req.on("data", (c) => { size += c.length; if (size <= $MAX_BODY) chunks.push(c); });
+    req.on("end", () => {
+      if (size > $MAX_BODY) return $webFail(res, 413, "request body too large\n");
+      const url = new URL(req.url, "http://localhost");
+      let path = url.pathname;
+      try { path = decodeURIComponent(path); } catch (e) {}
+      const query = new Map();
+      for (const k of Array.from(new Set(url.searchParams.keys())).sort()) {
+        const all = url.searchParams.getAll(k);
+        query.set(k, all[all.length - 1]);
+      }
+      const headers = new Map();
+      for (const k of Object.keys(req.headers).sort()) {
+        const v = req.headers[k];
+        headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+      }
+      let out;
+      try {
+        out = handler(makeRequest(req.method, path, query, headers, Buffer.concat(chunks).toString("utf8")));
+      } catch (e) {
+        console.error("runtime error: " + $webError(e));
+        return $webFail(res, 500, "internal server error\n");
+      }
+      let bad = null;
+      if (!Number.isInteger(out.f_status) || out.f_status < 100 || out.f_status > 599) bad = "the response status " + out.f_status + " is not between 100 and 599";
+      else if (/[\r\n]/.test(out.f_type)) bad = "the response type must be one line";
+      if (bad !== null) {
+        console.error("runtime error: line " + line + ": " + bad);
+        return $webFail(res, 500, "internal server error\n");
+      }
+      res.writeHead(out.f_status, $webHeaders(out.f_type));
+      res.end(out.f_body);
+    });
+  });
+  server.headersTimeout = 10000;
+  server.requestTimeout = 30000;
+  server.on("error", () => {
+    console.error("runtime error: line " + line + ": cannot serve on '" + addr + "' (the address is in use, or not available on this machine)");
+    process.exit(1);
+  });
+  server.listen(Number(m[2]), host, () => console.log("serving on http://" + addr));
+}
 const $b_trim = (s) => s.trim();
 const $b_upper = (s) => s.toUpperCase();
 const $b_lower = (s) => s.toLowerCase();
@@ -130,7 +202,7 @@ class Emitter:
         self.lines.append('  ' * self.ind + s)
 
     def program(self, ast):
-        allow = {'read': [], 'write': [], 'env': []}
+        allow = {'read': [], 'write': [], 'env': [], 'serve': []}
         for s in ast:
             if s.k == 'allow':
                 allow[s.kind].append(s.value)
@@ -272,6 +344,8 @@ class Emitter:
                 return '$mod(%s, %s, %d)' % (lhs, r, e.line)
             if e.op == '+' and e.t == 'sql':
                 return '$sqlcat(%s, %s)' % (lhs, r)
+            if e.op == '+' and e.t == 'html':
+                return '$htmlcat(%s, %s)' % (lhs, r)
             return '(%s %s %s)' % (lhs, OPS.get(e.op, e.op), r)
         if k == 'field':
             return '%s.f_%s' % (self.ex(e.obj), e.name)
@@ -300,6 +374,20 @@ class Emitter:
                 for p in e.args[0].parts
             ]
             return 'new $Sql([%s])' % ', '.join(parts)
+        if b == 'html':
+            bits = [
+                json.dumps(p[1], ensure_ascii=False)
+                if p[0] == 's'
+                else ('%s.s' % self.ex(p[1]) if p[1].t == 'html' else '$esc(%s)' % self.ex(p[1]))
+                for p in e.args[0].parts
+            ]
+            return 'new $Html(%s)' % ' + '.join(['""', *bits])
+        if b == 'serve':
+            return '$serve(%s, %s, (m, p, q, h, b) => new R_Request(m, p, q, h, b), %d)' % (
+                self.ex(e.args[0]),
+                self.name(e.handler.name),
+                e.line,
+            )
         a = [self.ex(x) for x in e.args]
         if b in SIMPLE:
             if b in PERMS:

@@ -14,7 +14,7 @@ from .emit_go import GoEmitter
 from .emit_js import Emitter
 from .errors import OktoError
 from .lexer import tokenize
-from .parser import Parser
+from .parser import Parser, builtin_records
 
 VERSION = __version__
 
@@ -41,7 +41,7 @@ GO_PLACES = (r'C:\Program Files\Go\bin\go.exe', '/usr/local/go/bin/go')
 def compile_source(src, target='js'):
     """Returns (generated code or None, list of OktoError)."""
     try:
-        ast = Parser(tokenize(src)).program()
+        ast = builtin_records() + Parser(tokenize(src)).program()
     except OktoError as e:
         return None, [e]
     errors = Checker().check(ast)

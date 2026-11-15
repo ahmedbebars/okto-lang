@@ -66,14 +66,28 @@ what is not, and where the language is honest about its limits.
 - **Safe queries.** The `sql` type takes its text from the source code only, and the values inside
   `{ }` are kept apart. A query cannot be built from a changing text, and a text cannot be added to a query.
 
+### 0.5: a simple web server
+
+- `serve(address, handler)`: the handler is a plain Okto function from `Request` to `Response`,
+  so it can be tested by calling it. It needs an `allow serve` line like files do.
+- **The `html` type.** Like `sql`, it takes its text from the source code only, and every value
+  inside `{ }` is escaped. A value can never become a tag, so cross-site scripting through a value is not possible.
+- Safe defaults instead of options: a 1 MB body limit, time limits on slow clients, three
+  protective headers on every answer, and a 500 answer (not a crash) when the handler fails.
+- One request at a time. This keeps global `var`s safe without locks, and is enough for small
+  sites and tools; running tasks at the same time is a later stage.
+- `serve` must be the last top-level line: the program's work before it is plain to see, and
+  nothing after it would ever run.
+
 ## Roadmap
 
 | Stage | Content |
 |---|---|
-| 0.5 | Several files (imports), and using Go and JavaScript libraries |
-| 0.6 | Errors as values (in place of exceptions), and running tasks at the same time |
-| 0.7 | Network and database access, behind an `allow network` permission |
-| 0.8 | Tools: a formatter, an editor extension, an MCP server for AI assistants |
+| 0.5 | A simple web server and the `html` type (done) |
+| 0.6 | Several files (imports), and using Go and JavaScript libraries |
+| 0.7 | Errors as values (in place of exceptions), and running tasks at the same time |
+| 0.8 | Outgoing network requests and database access, behind `allow` permissions |
+| 0.9 | Tools: a formatter, an editor extension, an MCP server for AI assistants |
 
 The order can change. Proposals are welcome as
 [language proposals](https://github.com/ahmedbebars/okto-lang/issues/new/choose).

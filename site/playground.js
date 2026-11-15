@@ -90,7 +90,7 @@ function decode(code) {
 
 async function init() {
   startWorker();
-  const manifest = await (await fetch("manifest.json")).json();
+  const manifest = await (await fetch("manifest.json", { cache: "no-cache" })).json();
   examples = manifest.examples;
   for (const el of document.querySelectorAll("[data-version]")) el.textContent = manifest.version;
   for (const name of Object.keys(examples)) picker.add(new Option(name, name));

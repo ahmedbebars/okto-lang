@@ -8,6 +8,24 @@ While the version is below 1.0, a minor version (0.x) may change the language.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
+A simple web server.
+
+### Added
+
+- **`serve(address, handler)`** answers web requests with an Okto function that takes a `Request`
+  and returns a `Response`. It needs an `allow serve "address"` line (E140), and it is the last
+  top-level line of the program (E145, E146). The same program runs on Node and as a native Go program.
+- **The `html` type.** `html("... {value} ...")` escapes every value, so a value can never add a tag
+  or a script. It takes a text written in place only (E147), and `html + html` joins pieces.
+- The built-in records `Request` (method, path, query, headers, body) and `Response` (status, type, body).
+- Safe defaults for every answer: a 1 MB body limit (413), time limits on slow clients,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`.
+  A run-time error in the handler answers 500 and the server keeps running.
+- Arabic words: `استضف`, `صفحة_ويب`, `طلب`, `استجابة`, and `اسمح استضافة`.
+- `examples/web.ok`, and tests that send real requests to the Node and Go servers and compare the answers.
+
 ## [0.4.0] - 2026-11-15
 
 The first public release.
@@ -68,5 +86,6 @@ The first public release.
 - Errors with a code, a message and a fix line, in English and Arabic, and as JSON.
 - The `okto` command: `run`, `check` and `build`.
 
-[Unreleased]: https://github.com/ahmedbebars/okto-lang/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ahmedbebars/okto-lang/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ahmedbebars/okto-lang/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ahmedbebars/okto-lang/releases/tag/v0.4.0
