@@ -55,13 +55,7 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          version="${TAG#v}"
-          awk -v v="$version" '
-            $0 ~ "^## \[" v "\]" { on = 1; next }
-            on && /^## \[/ { exit }
-            on { print }
-          ' CHANGELOG.md > notes.md
-          test -s notes.md
+          python tools/release_notes.py "${TAG#v}" notes.md
           cat notes.md
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
