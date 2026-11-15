@@ -1,0 +1,25 @@
+# Routers and how healthy they are. Only names marked pub can be used by other files.
+
+pub record Router:
+    name: text
+    ping: int?
+
+pub let SLOW_MS = 100
+
+pub fn make(name: text, ping: int?) -> Router:
+    return Router(name: name, ping: ping)
+
+pub fn state(r: Router) -> text:
+    let p = r.ping
+    if p == none:
+        return "down"
+    if p > SLOW_MS:
+        return "slow"
+    return "ok"
+
+pub fn count_bad(items: list[Router]) -> int:
+    var n = 0
+    for r in items:
+        if state(r) != "ok":
+            n = n + 1
+    return n

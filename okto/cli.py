@@ -12,9 +12,7 @@ from . import __version__
 from .checker import Checker
 from .emit_go import GoEmitter
 from .emit_js import Emitter
-from .errors import OktoError
-from .lexer import tokenize
-from .parser import Parser, builtin_records
+from .loader import load_program
 
 VERSION = __version__
 
@@ -38,16 +36,22 @@ FLAGS = ('--ar', '--json', '--go', '--js', '--keep')
 GO_PLACES = (r'C:\Program Files\Go\bin\go.exe', '/usr/local/go/bin/go')
 
 
-def compile_source(src, target='js'):
-    """Returns (generated code or None, list of OktoError)."""
-    try:
-        ast = builtin_records() + Parser(tokenize(src)).program()
-    except OktoError as e:
-        return None, [e]
-    errors = Checker().check(ast)
+def compile_program(src, target='js', path=None, files=None):
+    """Compiles a program and every file it brings in with `use`.
+    path is where the main file is on disk; files is a dict of path -> text to use in place of the disk.
+    Returns (generated code or None, list of OktoError, modules): modules[0] is the main file,
+    and an error's .file is the number of the module that holds it."""
+    ast, modules, errors = load_program(src, path, files)
+    if not errors:
+        errors = Checker().check(ast)
     if errors:
-        return None, errors
-    return (GoEmitter() if target == 'go' else Emitter()).program(ast), []
+        return None, errors, modules
+    return (GoEmitter() if target == 'go' else Emitter()).program(ast), [], modules
+
+
+def compile_source(src, target='js', files=None):
+    """Returns (generated code or None, list of OktoError)."""
+    return compile_program(src, target, files=files)[:2]
 
 
 def find_go():
@@ -132,7 +136,7 @@ def main(argv):
         return 2
 
     use_go = ('--go' in flags) if cmd == 'run' else ('--js' not in flags)
-    code, errors = compile_source(src, 'go' if use_go else 'js')
+    code, errors, modules = compile_program(src, 'go' if use_go else 'js', path=path)
     if errors:
         if as_json:
             print(
@@ -143,8 +147,8 @@ def main(argv):
                 )
             )
         else:
-            lines = src.splitlines()
-            print('\n\n'.join(e.render(path, lines, lang) for e in errors), file=sys.stderr)
+            shown = [e.render(modules[e.file].path, modules[e.file].lines, lang) for e in errors]
+            print('\n\n'.join(shown), file=sys.stderr)
             n = len(errors)
             print(
                 ('\n%d error(s). Nothing was run.' if lang == 'en' else '\nعدد الأخطاء: %d. لم يُشغَّل شيء.') % n,

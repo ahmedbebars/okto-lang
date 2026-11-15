@@ -79,14 +79,27 @@ what is not, and where the language is honest about its limits.
 - `serve` must be the last top-level line: the program's work before it is plain to see, and
   nothing after it would ever run.
 
+### 0.6: several files
+
+- `use "lib/tools.ok"`, then `tools.name`. There is no way to bring in a single name, so every
+  name from another file shows where it comes from, for people and for AI assistants alike.
+- Private by default: only `pub` names can be used from outside, and a `var` is never public.
+  A file's inside can change without breaking the files that use it.
+- Used files hold definitions only. Bringing a file in never prints, writes or serves anything by itself.
+- Permissions stay in the main file. A used file cannot widen them, and one place shows
+  everything the program may touch. Per-file permissions may come later.
+- Paths start from the file that holds the `use` line and must match the spelling on disk exactly,
+  so a program that works on Windows also works on Linux.
+- One program in the end: both backends still make one file, and messages name the file and line.
+
 ## Roadmap
 
 | Stage | Content |
 |---|---|
 | 0.5 | A simple web server and the `html` type (done) |
-| 0.6 | Several files (imports), and using Go and JavaScript libraries |
+| 0.6 | Several files: `use` and `pub` (done) |
 | 0.7 | Errors as values (in place of exceptions), and running tasks at the same time |
-| 0.8 | Outgoing network requests and database access, behind `allow` permissions |
+| 0.8 | Using Go and JavaScript libraries, outgoing network requests and database access, behind `allow` permissions |
 | 0.9 | Tools: a formatter, an editor extension, an MCP server for AI assistants |
 
 The order can change. Proposals are welcome as

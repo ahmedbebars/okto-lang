@@ -15,10 +15,40 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 
-from okto.cli import compile_source, find_go, go_build
+from okto.cli import compile_program, find_go, go_build
 from okto.errors import MSG
 
 WITH_GO = find_go() is not None and '--node' not in sys.argv
+
+TOOLS = (
+    'use "names.ok"\n'
+    'pub record Router:\n'
+    '    name: text\n'
+    '    ping: int?\n'
+    'pub let LIMIT = 50\n'
+    'var calls = 0\n'
+    'pub fn status(r: Router) -> text:\n'
+    '    calls = calls + 1\n'
+    '    let p = r.ping ?? 999\n'
+    '    if p > LIMIT:\n'
+    '        return names.label("slow") + " " + r.name\n'
+    '    return names.label("ok") + " " + r.name\n'
+    'pub fn count() -> int:\n'
+    '    return calls\n'
+    'pub fn boom(xs: list[int]) -> int:\n'
+    '    return xs[5]\n'
+)
+NAMES = 'pub fn label(t: text) -> text:\n    return "[" + upper(t) + "]"\n'
+SMALL = (
+    'pub fn hi() -> text:\n'
+    '    return "hi"\n'
+    'fn hidden() -> int:\n'
+    '    return 1\n'
+    'record Inner:\n'
+    '    a: int\n'
+    'pub let K = 3\n'
+    'var v = 1\n'
+)
 
 CASES = [
     ('arithmetic', 'print(7 // 2, 7 % 3, -7 // 2, -7 % 3, 1 / 2, 2 * 3.5)\n', '3 1 -4 2 0.5 7'),
@@ -490,6 +520,119 @@ CASES = [
         'ثابت ر = رد(Request(method: "GET", path: "<x>", query: {}, headers: {}, body: ""))\nاطبع(ر.body)\n',
         '<b>&lt;x&gt;</b>',
     ),
+    # ---- v0.6: several files ----
+    (
+        'use a file',
+        {
+            'main.ok': 'use "lib/tools.ok"\nlet r = tools.Router(name: "core", ping: 12)\n'
+            'var all: list[tools.Router] = [r, tools.Router(name: "edge", ping: none)]\nfor x in all:\n'
+            '    print(tools.status(x))\nprint(tools.count(), tools.LIMIT, r)\n',
+            'lib/tools.ok': TOOLS,
+            'lib/names.ok': NAMES,
+        },
+        '[OK] core\n[SLOW] edge\n2 50 Router(name: core, ping: 12)',
+    ),
+    (
+        'run-time error names the file',
+        {'main.ok': 'use "lib/tools.ok"\nprint(tools.boom([1]))\n', 'lib/tools.ok': TOOLS, 'lib/names.ok': NAMES},
+        ('runtime', 'line 16 of lib/tools.ok: index 5 is outside the list'),
+    ),
+    (
+        'the same name in two files',
+        {
+            'main.ok': 'use "a.ok"\nuse "b.ok"\nfn show() -> text:\n    return "main"\nprint(a.show(), b.show(), show())\n',
+            'a.ok': 'pub fn show() -> text:\n    return "a " + helper()\nfn helper() -> text:\n    return "1"\n',
+            'b.ok': 'pub fn show() -> text:\n    return "b " + helper()\nfn helper() -> text:\n    return "2"\n',
+        },
+        'a 1 b 2 main',
+    ),
+    (
+        'a file used by two files runs once',
+        {
+            'main.ok': 'use "a.ok"\nuse "count.ok"\nprint(a.next(), count.next(), a.next())\n',
+            'a.ok': 'use "count.ok"\npub fn next() -> int:\n    return count.next()\n',
+            'count.ok': 'var n = 0\npub fn next() -> int:\n    n = n + 1\n    return n\n',
+        },
+        '1 2 3',
+    ),
+    (
+        'arabic use and pub',
+        {
+            'main.ok': 'استخدم "ادوات.ok"\nاطبع(ادوات.ترحيب("أحمد"))\n',
+            'ادوات.ok': 'علني دالة ترحيب(س: نص) -> نص:\n    ارجع "أهلاً " + س\n',
+        },
+        'أهلاً أحمد',
+    ),
+    (
+        'a handler from another file',
+        {
+            'main.ok': 'use "web.ok"\nlet r = web.handle(Request(method: "GET", path: "/x", query: {}, headers: {}, body: ""))\n'
+            'print(r.status, r.body)\n',
+            'web.ok': 'pub fn handle(req: Request) -> Response:\n'
+            '    return Response(status: 200, type: "text/plain", body: req.path)\n',
+        },
+        '200 /x',
+    ),
+    ('not public', {'main.ok': 'use "t.ok"\nprint(t.hidden())\n', 't.ok': SMALL}, ['E157']),
+    ('private var', {'main.ok': 'use "t.ok"\nprint(t.v)\n', 't.ok': SMALL}, ['E157']),
+    ('private record', {'main.ok': 'use "t.ok"\nlet x: t.Inner? = none\n', 't.ok': SMALL}, ['E157']),
+    ('no such public name', {'main.ok': 'use "t.ok"\nprint(t.hii())\n', 't.ok': SMALL}, ['E158']),
+    ('a used constant cannot change', {'main.ok': 'use "t.ok"\nt.K = 4\n', 't.ok': SMALL}, ['E103']),
+    ('a function is not a value', {'main.ok': 'use "t.ok"\nlet f = t.hi\n', 't.ok': SMALL}, ['E102']),
+    ('a file is not a value', {'main.ok': 'use "t.ok"\nprint(t)\n', 't.ok': SMALL}, ['E101']),
+    ('file not found', {'main.ok': 'use "nope.ok"\n', 't.ok': SMALL}, ['E152']),
+    ('only .ok files', 'use "notes.txt"\n', ['E151']),
+    ('the file name must be a plain name', {'main.ok': 'use "my-tools.ok"\n', 'my-tools.ok': ''}, ['E151']),
+    ('the file name cannot be a language word', {'main.ok': 'use "print.ok"\n', 'print.ok': ''}, ['E151']),
+    ('use comes first', {'main.ok': 'print(1)\nuse "t.ok"\n', 't.ok': SMALL}, ['E150']),
+    ('use only at the top level', {'main.ok': 'if true:\n    use "t.ok"\n', 't.ok': SMALL}, ['E150']),
+    (
+        'files in a circle',
+        {'main.ok': 'use "a.ok"\n', 'a.ok': 'use "b.ok"\n', 'b.ok': 'use "a.ok"\n'},
+        ['E153'],
+    ),
+    (
+        'two files with one name',
+        {'main.ok': 'use "a.ok"\nuse "x/t.ok"\n', 'a.ok': 'use "t.ok"\n', 't.ok': '', 'x/t.ok': ''},
+        ['E154'],
+    ),
+    ('used files hold definitions only', {'main.ok': 'use "t.ok"\n', 't.ok': 'print(1)\n'}, ['E155']),
+    ('allow only in the main file', {'main.ok': 'use "t.ok"\n', 't.ok': 'allow read "x"\n'}, ['E156']),
+    ('a var cannot be public', {'main.ok': 'use "t.ok"\n', 't.ok': 'pub var x = 1\n'}, ['E159']),
+    (
+        'a public function shows a private record',
+        {'main.ok': 'use "t.ok"\n', 't.ok': 'record R:\n    a: int\npub fn f() -> R:\n    return R(a: 1)\n'},
+        ['E160'],
+    ),
+    ('no methods', 'let x = "a"\nprint(x.trim())\n', ['E161']),
+    (
+        'a used file is checked too',
+        {'main.ok': 'use "t.ok"\n', 't.ok': 'pub fn f() -> int:\n    return "x"\n'},
+        ['E102'],
+    ),
+    (
+        'a used file needs the main file to allow',
+        {'main.ok': 'use "t.ok"\nprint(t.f())\n', 't.ok': 'pub fn f() -> text:\n    return read_file("a") ?? ""\n'},
+        ['E140'],
+    ),
+    (
+        'the main file allows for every file',
+        {
+            'main.ok': 'allow env "OKTO_TEST_KEY"\nuse "t.ok"\nprint(t.f())\n',
+            't.ok': 'pub fn f() -> text:\n    return env("OKTO_TEST_KEY") ?? "-"\n',
+        },
+        'abc123',
+    ),
+    ('a file used twice', {'main.ok': 'use "t.ok"\nuse "t.ok"\n', 't.ok': ''}, ['E104']),
+    ('a name that is a file', {'main.ok': 'use "t.ok"\nlet t = 1\n', 't.ok': ''}, ['E104']),
+    (
+        'a used global before it exists',
+        {
+            'main.ok': 'use "t.ok"\nprint(1)\n',
+            't.ok': 'pub let a = first()\nfn first() -> int:\n    return b\nlet b = 2\n',
+        },
+        ['E120'],
+    ),
 ]
 
 
@@ -528,11 +671,15 @@ def one(case):
     """Returns a list of failure texts for this case (empty when it passes)."""
     name, src, want = case
     fails = []
-    js, errors = compile_source(src)
+    files = None
+    if isinstance(src, dict):  # several files: main.ok and the files it uses
+        files = dict(src)
+        src = files.pop('main.ok')
+    js, errors, modules = compile_program(src, files=files)
     for e in errors:  # every message must format in both languages
         e.parts('en')
         e.parts('ar')
-        e.render('t.ok', src.splitlines(), 'ar')
+        e.render(modules[e.file].rel, modules[e.file].lines, 'ar')
     codes = [e.code for e in errors]
     if isinstance(want, list):
         if codes != want:
@@ -542,7 +689,7 @@ def one(case):
         return ['FAIL  %s\n   want: %r\n   got:  %r' % (name, want, codes)]
     runs = [('node', run_js(js))]
     if WITH_GO:
-        runs.append(('go', run_go(compile_source(src, 'go')[0])))
+        runs.append(('go', run_go(compile_program(src, 'go', files=files)[0])))
     for backend, result in runs:
         ok, got = judge(want, result)
         if not ok:

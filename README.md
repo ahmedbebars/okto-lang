@@ -17,8 +17,9 @@ Keywords in English and Arabic · compiles to JavaScript and to one native progr
 </div>
 
 > [!NOTE]
-> Okto is young (version 0.5). The language works and is tested on two backends, and it can
-> serve a simple website, but it has no imports, no outgoing network and no database driver yet. See [what is missing](#status-and-limits)
+> Okto is young (version 0.6). The language works and is tested on two backends, a program can
+> span several files, and it can serve a simple website, but it has no libraries, no outgoing
+> network and no database driver yet. See [what is missing](#status-and-limits)
 > before you plan anything serious on it.
 
 ## Why another language?
@@ -216,13 +217,14 @@ This is one small measurement of plain integer loops, not a general benchmark.
 
 ## Status and limits
 
-What works today (version 0.5): the full checker, records, lists, dicts, text functions, files,
-permissions, secrets, safe queries, a simple web server with safe html, both backends,
+What works today (version 0.6): the full checker, records, lists, dicts, text functions, files,
+permissions, secrets, safe queries, a simple web server with safe html, programs in several
+files (`use` and `pub`), both backends,
 English and Arabic keywords and messages.
 
 What is not built yet:
 
-- Imports and libraries, outgoing network requests, a database driver, concurrency, error values.
+- Go and JavaScript libraries, outgoing network requests, a database driver, concurrency, error values.
 - The web server has no HTTPS, cookies or file serving yet: put Caddy or nginx in front of a public site.
 - Run-time error messages are in English only.
 - Whole-number results above 2^53 differ between the Node and Go backends.

@@ -1,4 +1,4 @@
-# Okto v0.5 — complete guide for AI assistants
+# Okto v0.6 — complete guide for AI assistants
 
 This file is the whole language. Read it once and you can write correct Okto.
 Okto is strict on purpose: there is **one way** to do each thing, and the checker
@@ -129,6 +129,64 @@ while total < limit:
 
 6. **No use-before-definition.** Calling a function that reads a global defined on a
    later line is a check-time error (E120).
+
+## Several files
+
+A program can be split into files. The main file brings another file in with `use`, and
+writes everything from it as `file.name`:
+
+```
+# main.ok
+use "lib/routers.ok"
+
+let r = routers.make("core", 12)          # a function of routers.ok
+let all: list[routers.Router] = [r]       # a record type of routers.ok
+print(routers.state(r), routers.SLOW_MS)  # a function and a constant
+```
+
+```
+# lib/routers.ok
+pub record Router:
+    name: text
+    ping: int?
+
+pub let SLOW_MS = 100
+
+pub fn make(name: text, ping: int?) -> Router:
+    return Router(name: name, ping: ping)
+
+pub fn state(r: Router) -> text:
+    let p = r.ping
+    if p == none:
+        return "down"
+    if p > SLOW_MS:                        # inside its own file, a name is written plainly
+        return "slow"
+    return "ok"
+```
+
+- `use "path.ok"` lines come first in a file; only `allow` lines may come before them (E150).
+  The path starts from the folder of the file that holds the line, uses `/` between folders,
+  ends with `.ok`, and must match the spelling on disk exactly, capitals included (E151, E152).
+- The file's name without `.ok` is the name before the dot: `use "lib/routers.ok"` gives
+  `routers.`. It must be a plain name and not a word of the language (E151). There is no way to
+  bring in a single name: always write `routers.state(...)`, so a reader sees where it comes from.
+- Only names marked `pub` can be used from another file (E157, E158): `pub fn`, `pub record`
+  and `pub let`. A `var` is never public (E159): share changing state through `pub` functions.
+  A public function, record or constant cannot show a private record of its file (E160).
+- Inside its own file a name is written plainly (`make(...)`, `Router`). Each file has its own
+  names: two files may both have a `helper`, and the main file may have one too.
+- A used file holds only `use`, `fn`, `record`, `let` and `var` lines (E155). Its `let` and
+  `var` lines run once, before the file that uses it. A file used by several files is loaded once.
+- `allow` lines are written in the main file only (E156). They cover every file of the program,
+  so one place shows everything the program may touch. A used file that reads a file still needs
+  `allow read` in the main file (E140).
+- Two different files with the same name in one program (E154), and files that use each other
+  in a circle (E153), are refused.
+- Messages name the file: `error[E102] lib/routers.ok:9:12`, `"file"` in `--json` output, and
+  `runtime error: line 9 of lib/routers.ok: ...` at run time.
+- `value.name(...)` is E161: there are no methods. Only `file.name(...)` can follow a dot.
+- `okto build main.ok` puts every file into the one program it makes.
+- The playground on the website has one file only, so `use` does not work there.
 
 ## Safety features
 
@@ -290,6 +348,7 @@ diacritics are optional (`إذا` = `اذا`). The Arabic comma `،` and Arabic 
 | `else if` | `وإلا إذا` | `continue` | `استمر` |
 | `while` | `طالما` | `in` | `في` |
 | `for` | `لكل` | `allow` | `اسمح` |
+| `use` | `استخدم` | `pub` | `علني` |
 | `read` | `قراءة` | `write` | `كتابة` |
 | `env` | `بيئة` | `serve` (in `allow`) | `استضافة` |
 | `int` | `عدد` | `float` | `عشري` |
@@ -342,17 +401,25 @@ diacritics are optional (`إذا` = `اذا`). The Arabic comma `،` and Arabic 
 | E132 | dict key type is not `text` or `int` |
 | E133 | a record holds itself directly (make the field optional or a list) |
 | E134 | whole number too large |
-| E140 | file, environment or web access without an `allow` line |
+| E140 | file, environment or web access without an `allow` line in the main file |
 | E141 | a secret shown or turned into text |
 | E142 | `sql(...)` given a value instead of a text written in place |
 | E143, E144 | `allow` inside a block / unknown permission kind |
 | E145 | `serve` given something other than a function that takes a `Request` and returns a `Response` |
 | E146 | `serve` is not the last top-level line, or is used twice or inside a block |
 | E147 | `html(...)` given a value instead of a text written in place |
+| E150 | `use` after other lines, or inside a block |
+| E151, E152 | a `use` path that cannot be a file name / a file that cannot be read |
+| E153, E154 | files that use each other in a circle / two files with the same name |
+| E155, E156 | a used file holds something other than definitions / an `allow` line |
+| E157, E158 | `file.name` that is not `pub` / that does not exist |
+| E159, E160 | `pub var` / a public name that shows a private record |
+| E161 | `value.name(...)`: there are no methods |
 
-## Not in v0.5 yet (do not use)
+## Not in v0.6 yet (do not use)
 
-Modules and imports, methods (`x.y()`), error values, concurrency, lambdas, classes,
+Go or JavaScript libraries, packages from the internet, methods (`x.y()`), error values,
+concurrency, lambdas, classes,
 outgoing network requests, database access, HTTPS, cookies and sessions, serving files
 from a folder, reading keyboard input, sorting records.
 Results of int maths above 2^53 differ between the Node and Go backends.

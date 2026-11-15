@@ -1,0 +1,14 @@
+# A program in several files (Okto 0.6).
+# Run from the project folder:  okto run examples/project/main.ok
+use "lib/routers.ok"
+use "lib/report.ok"
+
+var all: list[routers.Router] = []
+push(all, routers.make("core", 12))
+push(all, routers.make("edge", 140))
+push(all, routers.make("backup", none))
+
+print(report.title("Network check"))
+for r in all:
+    print(report.line(r))
+print("slow or down:", routers.count_bad(all), "of", len(all))
