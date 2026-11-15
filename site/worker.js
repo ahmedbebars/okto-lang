@@ -85,7 +85,14 @@ const ready = boot();
 ready.catch(() => {}); // the error is reported to the page with the first request
 
 self.onmessage = async (event) => {
-  const { id, source, lang, mode } = event.data;
+  // Only the page that started this worker may use it, and only with the expected message shape.
+  if (event.origin !== "" && event.origin !== self.location.origin) return;
+  const data = event.data;
+  if (typeof data !== "object" || data === null || typeof data.source !== "string") return;
+  const id = Number(data.id);
+  const source = data.source;
+  const lang = data.lang === "ar" ? "ar" : "en";
+  const mode = data.mode === "check" ? "check" : "run";
   try {
     await ready;
   } catch (e) {
