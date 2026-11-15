@@ -1,0 +1,24 @@
+# How the report looks. It uses routers.ok too: a file is loaded once, however many files use it.
+use "routers.ok"
+
+pub fn title(t: text) -> text:
+    return t + "\n" + line_of(len(t))
+
+pub fn line(r: routers.Router) -> text:
+    let p = r.ping
+    var ms = "-"
+    if p != none:
+        ms = "{p} ms"
+    return pad(r.name, 8) + pad(routers.state(r), 6) + ms
+
+fn pad(t: text, size: int) -> text:
+    var out = t
+    while len(out) < size:
+        out = out + " "
+    return out
+
+fn line_of(size: int) -> text:
+    var out = ""
+    for i in range(size):
+        out = out + "="
+    return out

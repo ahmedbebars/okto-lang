@@ -99,9 +99,13 @@ class Parser:
 
     # ---- statements -------------------------------------------------
     def program(self):
-        body = []
+        body, started = [], False
         while not self.at('EOF'):
-            body.append(self.stmt(True))
+            s = self.stmt(True)
+            if s.k == 'use' and started:
+                raise OktoError('E150', s.line, s.col)
+            started = started or s.k not in ('use', 'allow')
+            body.append(s)
         return body
 
     def block(self):
@@ -128,6 +132,43 @@ class Parser:
             value = self.expr()
             self.end()
             return N('decl', name.line, name.col, name=name.val, mutable=(k == 'var'), ty=ty, value=value)
+        if k == 'use':
+            if not top:
+                raise OktoError('E150', tok.line, tok.col)
+            self.i += 1
+            fix = ('write: use "tools.ok"', 'اكتب: استخدم "tools.ok"')
+            what = self.eat('STR', fix)
+            if len(what.val) != 1 or what.val[0][0] != 's':
+                raise OktoError(
+                    'E005',
+                    what.line,
+                    what.col,
+                    exp=('a plain text', 'نص عادي'),
+                    got=('a text with {values}', 'نص فيه {قيم}'),
+                    fix=fix,
+                )
+            self.end()
+            return N('use', what.line, what.col, path=what.val[0][1])
+        if k == 'pub':
+            nxt = self.t[self.i + 1]
+            if nxt.kind == 'var':
+                raise OktoError('E159', tok.line, tok.col)
+            if not top or nxt.kind not in ('fn', 'record', 'let'):
+                raise OktoError(
+                    'E005',
+                    nxt.line,
+                    nxt.col,
+                    exp=('fn, record or let at the top level', 'دالة أو سجل أو ثابت في المستوى الأعلى'),
+                    got=show_tok(nxt),
+                    fix=(
+                        'pub goes before a top-level fn, record or let: pub fn name(): ...',
+                        'علني تأتي قبل دالة أو سجل أو ثابت في المستوى الأعلى: علني دالة الاسم(): ...',
+                    ),
+                )
+            self.i += 1
+            s = self.stmt(True)
+            s.pub = True
+            return s
         if k == 'fn':
             if not top:
                 raise OktoError('E122', tok.line, tok.col)
@@ -252,6 +293,10 @@ class Parser:
         elif name in ('int', 'float', 'text', 'bool', 'secret', 'sql', 'html'):
             t = name
         else:
+            if self.at('.'):
+                self.i += 1
+                item = self.eat('NAME', ('write the record name after the dot', 'اكتب اسم السجل بعد النقطة'))
+                name = tok.val + '.' + item.val
             t = ('rec', name)
         if self.at('?'):
             self.i += 1
@@ -321,22 +366,20 @@ class Parser:
         while True:
             if self.at('(') and e.k == 'name':
                 self.i += 1
-                args, named = [], []
-                while not self.at(')'):
-                    if self.at('NAME') and self.t[self.i + 1].kind == ':':
-                        nt = self.eat('NAME')
-                        self.i += 1
-                        named.append((nt.val, self.expr(), nt.line, nt.col))
-                    else:
-                        args.append(self.expr())
-                    if not self.at(')'):
-                        self.eat(',', ("separate values with ','", "افصل بين القيم بـ '،'"))
-                self.eat(')')
-                e = N('call', e.line, e.col, name=e.name, args=args, named=named)
+                args, named = self.call_args()
+                e = N('call', e.line, e.col, name=e.name, args=args, named=named, mod=None)
             elif self.at('.'):
                 self.i += 1
                 f = self.eat('NAME', ('write a field name after the dot', 'اكتب اسم الحقل بعد النقطة'))
-                e = N('field', f.line, f.col, obj=e, name=f.val)
+                if self.at('('):
+                    # A call after a dot is a name from another file: tools.clean(x). There are no methods.
+                    if e.k != 'name':
+                        raise OktoError('E161', f.line, f.col, name=f.val)
+                    self.i += 1
+                    args, named = self.call_args()
+                    e = N('call', f.line, f.col, name=f.val, args=args, named=named, mod=e.name, mod_pos=e)
+                else:
+                    e = N('field', f.line, f.col, obj=e, name=f.val)
             elif self.at('['):
                 self.i += 1
                 idx = self.expr()
@@ -344,6 +387,21 @@ class Parser:
                 e = N('index', e.line, e.col, obj=e, idx=idx)
             else:
                 return e
+
+    def call_args(self):
+        """The values of a call, after its '('. Returns (values, named values)."""
+        args, named = [], []
+        while not self.at(')'):
+            if self.at('NAME') and self.t[self.i + 1].kind == ':':
+                nt = self.eat('NAME')
+                self.i += 1
+                named.append((nt.val, self.expr(), nt.line, nt.col))
+            else:
+                args.append(self.expr())
+            if not self.at(')'):
+                self.eat(',', ("separate values with ','", "افصل بين القيم بـ '،'"))
+        self.eat(')')
+        return args, named
 
     def primary(self):
         tok = self.peek()

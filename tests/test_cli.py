@@ -125,6 +125,7 @@ def test_examples_are_the_same_on_node_and_go(work):
         ['examples/guide_check.ok'],
         ['examples/secure.ok'],
         ['examples/inventory.ok', 'examples/routers.csv'],
+        ['examples/project/main.ok'],
     ]
     for args in runs:
         on_node = okto('run', *args, cwd=work)
@@ -286,6 +287,52 @@ def test_serve_on_a_busy_address(work):
             same(okto('run', '--go', path), (1, '', want % addr))
 
 
+def write_files(work, files):
+    for name, text in files.items():
+        full = os.path.join(work, name)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(text)
+
+
+def test_errors_in_another_file(work):
+    write_files(
+        work,
+        {
+            'main.ok': 'use "lib/tools.ok"\nprint(tools.size("abc"))\nlet x: int = "no"\n',
+            'lib/tools.ok': 'pub fn size(t: text) -> int:\n    return t\n',
+        },
+    )
+    rc, out, err = okto('check', '--json', 'main.ok', cwd=work)
+    same((rc, err), (1, ''))
+    got = [(e['file'], e['code'], e['line'], e['col']) for e in json.loads(out)['errors']]
+    same(got, [('main.ok', 'E102', 3, 14), ('lib/tools.ok', 'E102', 2, 12)])
+    rc, _, err = okto('check', 'main.ok', cwd=work)
+    same(rc, 1)
+    assert 'error[E102] lib/tools.ok:2:12\n    2 |     return t\n' in err, err
+    assert 'error[E102] main.ok:3:14\n' in err, err
+
+
+def test_files_are_found_from_the_file_that_uses_them(work):
+    write_files(
+        work,
+        {
+            'app/main.ok': 'use "lib/a.ok"\nprint(a.f())\n',
+            'app/lib/a.ok': 'use "b.ok"\npub fn f() -> text:\n    return b.g() + " " + to_text(slice([1, 2], 0, 5))\n',
+            'app/lib/b.ok': 'pub fn g() -> text:\n    return "from b"\n',
+        },
+    )
+    rc, out, err = okto('run', os.path.join('app', 'main.ok'), cwd=work)
+    same((rc, out), (1, ''))
+    same(err, 'runtime error: line 3 of lib/a.ok: slice 0..5 is outside the size 2\n')
+    # The same spelling everywhere: a path that only works on some systems is refused.
+    write_files(work, {'app/main.ok': 'use "Lib/a.ok"\n'})
+    rc, out, _ = okto('check', '--json', os.path.join('app', 'main.ok'), cwd=work)
+    report = json.loads(out)['errors'][0]
+    same((rc, report['code']), (1, 'E152'))
+    assert "it is named 'lib' on disk" in report['fix'], report
+
+
 TESTS = [
     test_version,
     test_usage,
@@ -299,6 +346,8 @@ TESTS = [
     test_build_javascript,
     test_web_server_on_node,
     test_serve_on_a_busy_address,
+    test_errors_in_another_file,
+    test_files_are_found_from_the_file_that_uses_them,
 ]
 GO_TESTS = [test_build_native_program, test_examples_are_the_same_on_node_and_go, test_web_server_is_the_same_on_go]
 

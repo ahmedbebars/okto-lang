@@ -8,6 +8,29 @@ While the version is below 1.0, a minor version (0.x) may change the language.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-15
+
+Programs in several files.
+
+### Added
+
+- **`use "path.ok"`** brings another file into a program. Everything from it is written
+  `file.name`: `tools.clean(x)`, `tools.Router(...)`, the type `tools.Router`, the constant `tools.LIMIT`.
+- **`pub`** marks the functions, records and constants that other files may use. Everything else
+  stays private to its file, and each file has its own names.
+- A used file holds definitions only, is loaded once however many files use it, and runs before its user.
+- `allow` lines stay in the main file and cover every file, so one place shows what the whole program may touch.
+- Messages name the file: `error[E102] lib/tools.ok:2:12`, a `"file"` field in `--json`, and
+  `line 2 of lib/tools.ok` in run-time errors, on Node and Go alike.
+- Twelve new checks, E150 to E161: misplaced `use`, bad or missing paths (with the exact spelling on
+  disk), circles, two files with one name, private names, `pub var`, and calls that look like methods.
+- Arabic words: `استخدم` and `علني`.
+- `examples/project/`: a program in three files.
+
+### Changed
+
+- `use` and `pub` are now keywords, so they cannot be names.
+
 ## [0.5.0] - 2026-11-15
 
 A simple web server.
@@ -86,6 +109,7 @@ The first public release.
 - Errors with a code, a message and a fix line, in English and Arabic, and as JSON.
 - The `okto` command: `run`, `check` and `build`.
 
-[Unreleased]: https://github.com/ahmedbebars/okto-lang/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ahmedbebars/okto-lang/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ahmedbebars/okto-lang/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/ahmedbebars/okto-lang/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ahmedbebars/okto-lang/releases/tag/v0.4.0

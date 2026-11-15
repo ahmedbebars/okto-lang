@@ -159,9 +159,9 @@ MSG = {
     ),
     'E140': (
         'this program is not allowed to {what}',
-        'add at the top of the file: {example}',
+        'add at the top of the main file: {example}',
         'هذا البرنامج غير مسموح له بـ{what}',
-        'أضف في أعلى الملف: {example}',
+        'أضف في أعلى الملف الرئيسي: {example}',
     ),
     'E141': (
         'a secret cannot be shown or turned into text',
@@ -205,6 +205,64 @@ MSG = {
         'صفحة الويب يجب أن تُكتب هنا نصاً، لا أن تؤخذ من قيمة',
         'اكتب: صفحة_ويب("<p>{{القيمة}}</p>")   القيم داخل {{ }} تُهرَّب فلا تضيف وسوماً أو سكربتات أبداً',
     ),
+    'E150': (
+        "'use' lines come first, at the top of the file",
+        'move it above every other line (only allow lines may come before it)',
+        "أسطر 'استخدم' تكون أولاً في أعلى الملف",
+        'انقله فوق كل الأسطر الأخرى (أسطر اسمح فقط يمكن أن تسبقه)',
+    ),
+    'E151': ("'{path}' cannot be used as a file here", '{hint}', "'{path}' لا يصلح هنا كملف", '{hint}'),
+    'E152': ("cannot read the file '{path}'", '{hint}', "تعذّرت قراءة الملف '{path}'", '{hint}'),
+    'E153': (
+        'files use each other in a circle: {chain}',
+        'move the shared parts into another file that both of them use',
+        'الملفات تستخدم بعضها في دائرة: {chain}',
+        'انقل الأجزاء المشتركة إلى ملف آخر يستخدمه الاثنان',
+    ),
+    'E154': (
+        "two files are named '{name}': {a} and {b}",
+        'rename one of them: every file in a program needs its own name',
+        "ملفان بالاسم '{name}': {a} و {b}",
+        'غيّر اسم أحدهما: كل ملف في البرنامج يحتاج اسماً خاصاً به',
+    ),
+    'E155': (
+        'a file brought in with use can only hold definitions (fn, record, let, var)',
+        'move this line into a function, or into the main file',
+        'الملف المستورد بـ استخدم يحتوي تعريفات فقط (دالة، سجل، ثابت، متغير)',
+        'انقل هذا السطر إلى دالة، أو إلى الملف الرئيسي',
+    ),
+    'E156': (
+        'permissions are given in the main file only',
+        'move this allow line to {main}: one file shows everything the whole program may touch',
+        'الصلاحيات تُعطى في الملف الرئيسي فقط',
+        'انقل سطر اسمح إلى {main}: ملف واحد يوضح كل ما يُسمح به للبرنامج كله',
+    ),
+    'E157': (
+        "'{name}' in {file} is not public",
+        'add pub before its definition in {file}',
+        "'{name}' في {file} ليس علنياً",
+        'أضف علني قبل تعريفه في {file}',
+    ),
+    'E158': ("'{mod}' has no public name '{name}'", '{hint}', "'{mod}' ليس فيه اسم علني '{name}'", '{hint}'),
+    'E159': (
+        'a var cannot be public',
+        'keep it private and give access through pub functions (a pub let is fine)',
+        'المتغير لا يكون علنياً',
+        'اتركه خاصاً ووفّر الوصول إليه بدوال علنية (الثابت العلني مسموح)',
+    ),
+    'E160': (
+        "'{name}' is public but uses the private record '{rec}'",
+        'add pub before record {rec}',
+        "'{name}' علني لكنه يستخدم السجل الخاص '{rec}'",
+        'أضف علني قبل سجل {rec}',
+    ),
+    'E161': (
+        "'{name}(...)' after a dot: Okto has no methods",
+        'pass the value to a function instead: {name}(value). '
+        'After a dot, only names from a file brought in with use can be called',
+        "'{name}(...)' بعد نقطة: أوكتو ليس فيها دوال تابعة للقيم",
+        'مرّر القيمة إلى دالة: {name}(القيمة). بعد النقطة تُستدعى فقط أسماء ملف مستورد بـ استخدم',
+    ),
 }
 
 
@@ -218,6 +276,8 @@ class OktoError(Exception):
     def __init__(self, code, line, col, **args):
         super().__init__(code)
         self.code, self.line, self.col, self.args_ = code, line, col, args
+        self.path = None  # the file that holds the error, when the program has several files
+        self.file = 0  # its number: 0 is the main file
 
     def parts(self, lang='en'):
         m = MSG[self.code]
@@ -228,7 +288,10 @@ class OktoError(Exception):
 
     def as_dict(self, lang='en'):
         msg, fix = self.parts(lang)
-        return {'code': self.code, 'line': self.line, 'col': self.col, 'message': msg, 'fix': fix}
+        out = {'code': self.code, 'line': self.line, 'col': self.col, 'message': msg, 'fix': fix}
+        if self.path is not None:
+            out['file'] = self.path
+        return out
 
     def render(self, path, lines, lang='en'):
         msg, fix = self.parts(lang)

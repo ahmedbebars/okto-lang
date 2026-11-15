@@ -1,6 +1,7 @@
 """Okto checker: finds mistakes before the program runs."""
 
 import difflib
+import re
 
 from .errors import OktoError
 from .lexer import norm
@@ -115,6 +116,25 @@ BUILTINS.update((n, n) for n in EN_BUILTINS)
 BUILTINS = {norm(k): v for k, v in BUILTINS.items()}
 # The built-in record names cannot be reused either.
 RESERVED = set(BUILTINS) | {norm(k) for k in REC_ALIASES}
+
+
+def ident(name):
+    """The name used in generated code. 'tools.clean' (a name from the file tools.ok) becomes
+    '5_tools_clean': it starts with a digit, so it can never meet a name written in a program."""
+    if '.' not in name:
+        return name
+    mod, item = name.split('.', 1)
+    return '%d_%s_%s' % (len(mod), mod, item)
+
+
+def recs_in(t):
+    """The record names inside a type."""
+    if isinstance(t, tuple):
+        if t[0] == 'rec':
+            yield t[1]
+        else:
+            for x in t[1:]:
+                yield from recs_in(x)
 
 
 def is_opt(t):
@@ -263,16 +283,87 @@ class Checker:
         self.allow = {'read': [], 'write': [], 'env': [], 'serve': []}
         self.serve_node = None
         self.serve_bad = False
+        # A program can have several files. Top-level names of a used file are kept under
+        # 'file.name'; inside that file they are written, and shown in messages, as plain 'name'.
+        self.mod = None  # the file being checked
+        self.prefix = ''  # 'file.' for a used file, '' for the main file
+        self.own = None
+        self.pub = set()  # full names marked pub
 
     def err(self, code, node, **args):
-        self.errors.append(OktoError(code, node.line, node.col, **args))
+        if self.own is not None:
+            args = {k: self.plain(v) for k, v in args.items()}
+        e = OktoError(code, node.line, node.col, **args)
+        if self.mod is not None:
+            e.file, e.path = self.mod.index, self.mod.path
+        self.errors.append(e)
+
+    def plain(self, v):
+        """Message values with this file's own names written the way the file writes them."""
+        if isinstance(v, tuple):
+            return tuple(self.plain(x) for x in v)
+        return self.own.sub('', v) if isinstance(v, str) else v
+
+    # ---- files ------------------------------------------------------
+    def enter(self, mod):
+        """Makes mod the file being checked. Returns True when the file changed."""
+        if mod is self.mod:
+            return False
+        self.mod = mod
+        self.prefix = mod.prefix if mod is not None else ''
+        self.own = re.compile(r'(?<![\w.])' + re.escape(self.prefix)) if self.prefix else None
+        return True
+
+    def q(self, name):
+        """The full name of a top-level name of this file."""
+        return name if '.' in name else self.prefix + name
+
+    def used(self, name):
+        """The file that this file brought in under that name, or None."""
+        if self.mod is None or self.find(name) is not None:
+            return None
+        return self.mod.uses.get(name)
+
+    def in_reach(self, names):
+        """The top-level names of this file among full names, as this file writes them."""
+        if not self.prefix:
+            return [n for n in names if '.' not in n]
+        return [n[len(self.prefix) :] for n in names if n.startswith(self.prefix)]
+
+    def var_names(self):
+        files = list(self.mod.uses) if self.mod is not None else []
+        return [n for sc in self.scopes[1:] for n in sc] + self.in_reach(self.scopes[0]) + files
+
+    def pub_hint(self, dep, name):
+        names = [n[len(dep.prefix) :] for n in sorted(self.pub) if n.startswith(dep.prefix)]
+        if not names:
+            return (
+                'nothing in %s is public: add pub before a definition there' % dep.rel,
+                'لا شيء علني في %s: أضف علني قبل تعريف هناك' % dep.rel,
+            )
+        return self.close(name, names) or (
+            'its public names are: %s' % ', '.join(names),
+            'أسماؤه العلنية هي: %s' % '، '.join(names),
+        )
+
+    def not_public(self, node, dep, full):
+        if full not in self.pub:
+            self.err('E157', node, name=full[len(dep.prefix) :], file=dep.rel)
+
+    def check_public(self, node, name, types):
+        """A public name of a used file must not show a private record of that file."""
+        for t in types:
+            for rec in recs_in(t):
+                if rec.startswith(self.prefix) and rec not in self.pub:
+                    self.err('E160', node, name=name, rec=rec)
+                    return
 
     # ---- names ------------------------------------------------------
     def find(self, name):
-        for sc in reversed(self.scopes):
+        for sc in reversed(self.scopes[1:]):
             if name in sc:
                 return sc[name]
-        return None
+        return self.scopes[0].get(self.q(name))
 
     def cur_type(self, name, v):
         for fr in reversed(self.narrow):
@@ -298,11 +389,11 @@ class Checker:
 
     def suggest(self, name, calls=False):
         if calls:
-            return self.close(name, list(self.fns) + list(self.recs) + EN_BUILTINS) or (
+            return self.close(name, self.in_reach(list(self.fns) + list(self.recs)) + EN_BUILTINS) or (
                 'define it first: fn %s(): ...' % name,
                 'عرّفها أولاً: دالة %s(): ...' % name,
             )
-        return self.close(name, [n for sc in self.scopes for n in sc]) or (
+        return self.close(name, self.var_names()) or (
             'define it first: let %s = ...' % name,
             'عرّفه أولاً: ثابت %s = ...' % name,
         )
@@ -313,8 +404,10 @@ class Checker:
         if v:
             return v.line
         for table in (self.fns, self.recs):
-            if name in table:
-                return table[name].line
+            if self.q(name) in table:
+                return table[self.q(name)].line
+        if self.mod is not None and name in self.mod.uses:
+            return self.mod.use_line[name]
         return None
 
     def declare(self, node, name, t, mutable, kind):
@@ -329,24 +422,45 @@ class Checker:
         if kind == 'global':
             v.order = self.nglobals
             self.nglobals += 1
+            name = self.q(name)
         self.scopes[-1][name] = v
 
-    def check_type(self, t, node):
-        """Reports unknown record names and bad dict keys. Returns False when unusable."""
+    def rec_name(self, name, node):
+        """The full name of the record that a written type names, or None after reporting why not."""
+        if '.' in name:
+            first, item = name.split('.', 1)
+            if self.mod is not None and first == self.mod.name and name in self.recs:
+                return name
+            dep = self.used(first)
+            if dep is None:
+                self.err('E121', node, name=name)
+            elif name not in self.recs:
+                self.err('E158', node, mod=first, name=item, hint=self.pub_hint(dep, item))
+            else:
+                self.not_public(node, dep, name)
+                return name
+            return None
+        if self.q(name) in self.recs:
+            return self.q(name)
+        if name in REC_ALIASES and name in self.recs:
+            return name
+        self.err('E121', node, name=name)
+        return None
+
+    def canon(self, t, node):
+        """A written type with full record names. Reports unknown records and bad dict keys;
+        returns 'error' when the type cannot be used."""
         if not isinstance(t, tuple):
-            return True
+            return t
         if t[0] == 'rec':
-            if t[1] not in self.recs:
-                self.err('E121', node, name=t[1])
-                return False
-            return True
+            name = self.rec_name(t[1], node)
+            return 'error' if name is None else ('rec', name)
         ok = True
         if t[0] == 'dict' and t[1] not in ('text', 'int'):
             self.err('E132', node, got=tstr(t[1]))
             ok = False
-        for x in t[1:]:
-            ok = self.check_type(x, node) and ok
-        return ok
+        inner = [self.canon(x, node) for x in t[1:]]
+        return (t[0], *inner) if ok and 'error' not in inner else 'error'
 
     # ---- program ----------------------------------------------------
     def check(self, ast):
@@ -354,14 +468,20 @@ class Checker:
             if s.k == 'allow':
                 self.allow[s.kind].append(s.value)
         for s in ast:
+            self.enter(getattr(s, 'mod', None))
             if s.k in ('fn', 'record'):
+                s.shown = s.name
                 if norm(s.name) in RESERVED and not getattr(s, 'builtin', False):
                     self.err('E123', s, name=s.name)
                 elif self.taken(s.name) is not None:
                     self.err('E104', s, name=s.name, prev=self.taken(s.name))
                 else:
+                    s.name = self.q(s.name)
                     (self.fns if s.k == 'fn' else self.recs)[s.name] = s
+                    if getattr(s, 'pub', False):
+                        self.pub.add(s.name)
         for s in ast:
+            self.enter(getattr(s, 'mod', None))
             if s.k == 'record':
                 seen, fields = {}, []
                 for name, t, line, col in s.fields:
@@ -370,20 +490,22 @@ class Checker:
                         self.err('E104', pos, name=name, prev=seen[name])
                         continue
                     seen[name] = line
-                    fields.append((name, t if self.check_type(t, pos) else 'error', line, col))
+                    fields.append((name, self.canon(t, pos), line, col))
                 s.fields = fields
             elif s.k == 'fn':
-                s.params = [
-                    (n, t if self.check_type(t, _Pos(line, col)) else 'error', line, col)
-                    for n, t, line, col in s.params
-                ]
-                if not self.check_type(s.ret, s):
-                    s.ret = 'error'
+                s.params = [(n, self.canon(t, _Pos(line, col)), line, col) for n, t, line, col in s.params]
+                s.ret = self.canon(s.ret, s)
         for s in ast:
-            if s.k == 'record':
+            self.enter(getattr(s, 'mod', None))
+            if s.k == 'record' and self.recs.get(s.name) is s:
                 self.check_nesting(s)
+            if self.prefix and getattr(s, 'pub', False) and s.k in ('fn', 'record'):
+                types = [f[1] for f in s.fields] if s.k == 'record' else [p[1] for p in s.params] + [s.ret]
+                self.check_public(s, s.name, types)
         for s in ast:
             if s.k not in ('fn', 'record'):
+                if self.enter(getattr(s, 'mod', None)):
+                    self.narrow = [{}]  # what one file proved about its names says nothing about another's
                 self.stmt(s)
         top = [s for s in ast if s.k not in ('fn', 'record', 'allow')]
         if (
@@ -394,9 +516,10 @@ class Checker:
             self.err('E146', self.serve_node)
         for s in ast:
             if s.k == 'fn' and self.fns.get(s.name) is s:
+                self.enter(getattr(s, 'mod', None))
                 self.check_fn(s)
         self.check_sites()
-        self.errors.sort(key=lambda e: (e.line, e.col))
+        self.errors.sort(key=lambda e: (e.file, e.line, e.col))
         return self.errors
 
     def check_nesting(self, rec):
@@ -431,7 +554,8 @@ class Checker:
 
     def check_sites(self):
         globs = self.scopes[0]
-        for fn, node, count in self.sites:
+        for fn, node, count, mod in self.sites:
+            self.enter(mod)
             seen, todo, uses = set(), [fn], set()
             while todo:
                 f = todo.pop()
@@ -459,7 +583,8 @@ class Checker:
 
     def s_decl(self, s):
         if s.ty is not None:
-            if self.check_type(s.ty, s):
+            s.ty = self.canon(s.ty, s)
+            if s.ty != 'error':
                 self.need(s.value, s.ty)
                 t = s.ty
             else:
@@ -473,8 +598,18 @@ class Checker:
         kind = 'global' if self.cur_fn is None and len(self.scopes) == 1 else 'local'
         s.vt = t
         self.declare(s, s.name, t, s.mutable, kind)
+        s.full = self.q(s.name) if kind == 'global' else s.name
+        if kind == 'global' and getattr(s, 'pub', False):
+            self.pub.add(s.full)
+            if self.prefix:
+                self.check_public(s, s.name, [t])
 
     def why_fixed(self, name, v):
+        if '.' in name:
+            return (
+                'a name from another file cannot be changed from here',
+                'اسم من ملف آخر لا يتغير من هنا',
+            )
         if v.kind == 'param':
             return (
                 'parameters cannot be changed; copy it first: var x = %s' % name,
@@ -492,18 +627,21 @@ class Checker:
 
     def target_var(self, node):
         """The variable behind a name that is about to be changed; reports errors."""
+        if getattr(node, 'bad', False):
+            return None
         v = self.find(node.name)
         if v is None:
             self.err(
                 'E101',
                 node,
                 name=node.name,
-                hint=self.close(node.name, [n for sc in self.scopes for n in sc])
+                hint=self.close(node.name, self.var_names())
                 or ('define it first: var %s = ...' % node.name, 'عرّفه أولاً: متغير %s = ...' % node.name),
             )
             return None
+        node.full = self.q(node.name) if v.kind == 'global' else node.name
         if self.cur_fn is not None and v.kind == 'global':
-            self.fn_uses[self.cur_fn.name].add(node.name)
+            self.fn_uses[self.cur_fn.name].add(node.full)
         if not v.mutable:
             self.err('E103', node, name=node.name, hint=self.why_fixed(node.name, v))
             return None
@@ -522,6 +660,9 @@ class Checker:
 
     def s_assign(self, s):
         tg = s.target
+        node = tg
+        while node.k in ('index', 'field') and not self.mod_field(node):
+            node = node.obj
         if tg.k == 'name':
             v = self.target_var(tg)
             if v is None:
@@ -559,6 +700,9 @@ class Checker:
         pass
 
     def s_allow(self, s):
+        pass
+
+    def s_use(self, s):
         pass
 
     def no_secret(self, e, t):
@@ -602,7 +746,12 @@ class Checker:
 
     def s_for(self, s):
         it = s.it
-        s.is_range = it.k == 'call' and self.taken(it.name) is None and BUILTINS.get(norm(it.name)) == 'range'
+        s.is_range = (
+            it.k == 'call'
+            and not getattr(it, 'mod', None)
+            and self.taken(it.name) is None
+            and BUILTINS.get(norm(it.name)) == 'range'
+        )
         if s.is_range:
             if len(it.args) not in (1, 2):
                 self.err('E105', it, name=it.name, exp='1-2', got=len(it.args), sig=SPECIAL_SIG['range'])
@@ -782,6 +931,34 @@ class Checker:
             )
         return cur
 
+    def mod_field(self, e):
+        """If e is file.name (a public constant of a used file), turns it into that name. Returns True then."""
+        if e.k != 'field' or e.obj.k != 'name':
+            return False
+        dep = self.used(e.obj.name)
+        if dep is None:
+            return False
+        full = dep.prefix + e.name
+        e.bad = False
+        if full in self.fns or full in self.recs:
+            kind = ('a function', 'دالة') if full in self.fns else ('a record', 'سجل')
+            self.err(
+                'E102',
+                e,
+                exp=('a value', 'قيمة'),
+                got=kind,
+                hint=('call it: %s(...)' % full, 'استدعِه: %s(...)' % full),
+            )
+            e.bad = True
+        elif full not in self.scopes[0]:
+            self.err('E158', e, mod=dep.name, name=e.name, hint=self.pub_hint(dep, e.name))
+            e.bad = True
+        else:
+            self.not_public(e, dep, full)
+        e.k, e.name, e.full = 'name', full, full
+        e.var = None
+        return True
+
     def field_type(self, t, e):
         """Type of field e.name on a value of type t; reports errors."""
         if is_rec(t):
@@ -834,14 +1011,26 @@ class Checker:
                     elif is_opt(t) or t == 'none':
                         self.err_none(p[1])
             return 'text'
+        if k == 'field' and self.mod_field(e):
+            k = 'name'
         if k == 'name':
+            if getattr(e, 'bad', False):
+                return 'error'
             v = self.find(e.name)
             e.var = v
             if v is None:
-                self.err('E101', e, name=e.name, hint=self.suggest(e.name))
+                if self.used(e.name) is not None:
+                    hint = (
+                        "'%s' is a file: write a name from it after a dot, like %s.name" % (e.name, e.name),
+                        "'%s' ملف: اكتب اسماً منه بعد نقطة، مثل %s.الاسم" % (e.name, e.name),
+                    )
+                else:
+                    hint = self.suggest(e.name)
+                self.err('E101', e, name=e.name, hint=hint)
                 return 'error'
+            e.full = self.q(e.name) if v.kind == 'global' else e.name
             if self.cur_fn is not None and v.kind == 'global':
-                self.fn_uses[self.cur_fn.name].add(e.name)
+                self.fn_uses[self.cur_fn.name].add(e.full)
             return self.cur_type(e.name, v)
         if k == 'un':
             return self.unary(e)
@@ -1099,37 +1288,16 @@ class Checker:
 
     def call(self, e):
         e.builtin = e.rec = None
-        if e.name in self.recs:
-            return self.construct(e, e.name)
+        if getattr(e, 'mod', None):
+            return self.mod_call(e)
+        if self.q(e.name) in self.recs:
+            return self.construct(e, self.q(e.name))
         if norm(e.name) in REC_ALIASES and self.taken(e.name) is None:
             return self.construct(e, REC_ALIASES[norm(e.name)])
         if e.named:
-            self.err(
-                'E127',
-                _Pos(e.named[0][2], e.named[0][3]),
-                what=(
-                    'names before values are only for creating records',
-                    'كتابة الاسم قبل القيمة تكون عند إنشاء السجلات فقط',
-                ),
-                hint=('pass the values only: %s(value, value)' % e.name, 'مرّر القيم فقط: %s(قيمة، قيمة)' % e.name),
-            )
-            for n in e.named:
-                self.val(n[1])
-            for a in e.args:
-                self.val(a)
-            return 'error'
-        if e.name in self.fns:
-            f = self.fns[e.name]
-            sig = '%s(%s)' % (f.name, ', '.join(p[0] for p in f.params))
-            if self.argc(e, len(f.params), sig):
-                for a, p in zip(e.args, f.params, strict=True):
-                    self.need(a, p[1])
-            if self.cur_fn is not None:
-                self.fn_calls[self.cur_fn.name].add(f.name)
-            else:
-                self.sites.append((f.name, e, self.nglobals))
-            self.unnarrow_globals()
-            return f.ret
+            return self.no_names(e)
+        if self.q(e.name) in self.fns:
+            return self.user_call(e, self.fns[self.q(e.name)])
         b = BUILTINS.get(norm(e.name))
         if b is None:
             self.err('E101', e, name=e.name, hint=self.suggest(e.name, calls=True))
@@ -1147,6 +1315,60 @@ class Checker:
                     self.need(a, p)
             return ret
         return getattr(self, 'b_' + b)(e)
+
+    def mod_call(self, e):
+        """file.name(...): a function or a record of a used file."""
+        dep = self.used(e.mod)
+        if dep is None:
+            if self.find(e.mod) is None:
+                self.err('E101', e.mod_pos, name=e.mod, hint=self.suggest(e.mod))
+            else:
+                self.err('E161', e, name=e.name)
+        else:
+            full = dep.prefix + e.name
+            if full in self.recs or full in self.fns:
+                self.not_public(e, dep, full)
+                if full in self.recs:
+                    return self.construct(e, full)
+                if e.named:
+                    return self.no_names(e)
+                return self.user_call(e, self.fns[full])
+            self.err('E158', e, mod=e.mod, name=e.name, hint=self.pub_hint(dep, e.name))
+        for n in e.named:
+            self.val(n[1])
+        for a in e.args:
+            self.val(a)
+        return 'error'
+
+    def user_call(self, e, f):
+        e.full = f.name
+        sig = '%s(%s)' % (f.name, ', '.join(p[0] for p in f.params))
+        if self.argc(e, len(f.params), sig):
+            for a, p in zip(e.args, f.params, strict=True):
+                self.need(a, p[1])
+        if self.cur_fn is not None:
+            self.fn_calls[self.cur_fn.name].add(f.name)
+        else:
+            self.sites.append((f.name, e, self.nglobals, self.mod))
+        self.unnarrow_globals()
+        return f.ret
+
+    def no_names(self, e):
+        """A call that puts names before its values, which only records take."""
+        self.err(
+            'E127',
+            _Pos(e.named[0][2], e.named[0][3]),
+            what=(
+                'names before values are only for creating records',
+                'كتابة الاسم قبل القيمة تكون عند إنشاء السجلات فقط',
+            ),
+            hint=('pass the values only: %s(value, value)' % e.name, 'مرّر القيم فقط: %s(قيمة، قيمة)' % e.name),
+        )
+        for n in e.named:
+            self.val(n[1])
+        for a in e.args:
+            self.val(a)
+        return 'error'
 
     def b_print(self, e):
         for a in e.args:
@@ -1226,7 +1448,15 @@ class Checker:
             return 'void'
         self.need(e.args[0], 'text')
         h = e.args[1]
-        f = self.fns.get(h.name) if h.k == 'name' and self.find(h.name) is None else None
+        f = None
+        if h.k == 'name' and self.find(h.name) is None:
+            f = self.fns.get(self.q(h.name))
+        elif h.k == 'field' and h.obj.k == 'name' and self.used(h.obj.name) is not None:
+            dep = self.used(h.obj.name)
+            f = self.fns.get(dep.prefix + h.name)
+            if f is not None:
+                self.not_public(h, dep, f.name)
+                h.k, h.name = 'name', f.name
         if f is None or len(f.params) != 1 or f.params[0][1] != WEB_REQUEST or f.ret != WEB_RESPONSE:
             self.err('E145', h)
             if h.k != 'name':
@@ -1234,7 +1464,7 @@ class Checker:
             return 'void'
         h.t = 'fn'
         e.handler = f
-        self.sites.append((f.name, e, self.nglobals))
+        self.sites.append((f.name, e, self.nglobals, self.mod))
         self.unnarrow_globals()
         return 'void'
 

@@ -2,7 +2,7 @@
 
 import json
 
-from .checker import PERMS, SIMPLE, is_agg, is_dict, root_of
+from .checker import PERMS, SIMPLE, ident, is_agg, is_dict, root_of
 
 PRELUDE = r""""use strict";
 const $fs = require("fs");
@@ -197,9 +197,17 @@ FRESH = ('call', 'list', 'dict')  # these always produce a new value: no copy ne
 class Emitter:
     def __init__(self):
         self.lines, self.ind, self.n = [], 1, 0
+        self.file = ''  # the used file being written ('' for the main file)
 
     def w(self, s):
         self.lines.append('  ' * self.ind + s)
+
+    def ln(self, line):
+        """A line number as generated code. In a used file it names the file too:
+        the run time prints 'line ' + this, so the message reads 'line 5 of lib/tools.ok'."""
+        if not self.file:
+            return str(line)
+        return json.dumps('%d of %s' % (line, self.file), ensure_ascii=False)
 
     def program(self, ast):
         allow = {'read': [], 'write': [], 'env': [], 'serve': []}
@@ -211,19 +219,24 @@ class Emitter:
             if s.k == 'record':
                 self.record(s)
         for s in ast:
-            if s.k not in ('record', 'allow'):
+            if s.k not in ('record', 'allow', 'use'):
+                mod = getattr(s, 'mod', None)
+                self.file = mod.rel if mod is not None and mod.name else ''
                 self.stmt(s)
         return PRELUDE + '\n'.join(self.lines) + '\n' + EPILOG
 
     def record(self, s):
         fields = ['f_' + f[0] for f in s.fields]
-        cls = 'R_' + s.name
+        cls = 'R_' + ident(s.name)
         self.w('class %s {' % cls)
         self.ind += 1
         self.w('constructor(%s) { %s }' % (', '.join(fields), ' '.join('this.%s = %s;' % (f, f) for f in fields)))
         self.w('$c() { return new %s(%s); }' % (cls, ', '.join('$copy(this.%s)' % f for f in fields)))
         shown = ' + ", " + '.join('"%s: " + $s(this.%s)' % (f[0], 'f_' + f[0]) for f in s.fields)
-        self.w('$t() { return %s + "(" + %s + ")"; }' % (json.dumps(s.name, ensure_ascii=False), shown or '""'))
+        self.w(
+            '$t() { return %s + "(" + %s + ")"; }'
+            % (json.dumps(getattr(s, 'shown', s.name), ensure_ascii=False), shown or '""')
+        )
         self.ind -= 1
         self.w('}')
 
@@ -235,23 +248,26 @@ class Emitter:
 
     @staticmethod
     def name(n):
-        return 'u_' + n
+        return 'u_' + ident(n)
 
     # ---- statements -------------------------------------------------
     def stmt(self, s):
         k = s.k
         if k == 'decl':
-            self.w('%s %s = %s;' % ('let' if s.mutable else 'const', self.name(s.name), self.val(s.value)))
+            self.w(
+                '%s %s = %s;'
+                % ('let' if s.mutable else 'const', self.name(getattr(s, 'full', s.name)), self.val(s.value))
+            )
         elif k == 'assign':
             tg = s.target
             if tg.k == 'name':
-                self.w('%s = %s;' % (self.name(tg.name), self.val(s.value)))
+                self.w('%s = %s;' % (self.name(getattr(tg, 'full', tg.name)), self.val(s.value)))
             elif tg.k == 'field':
                 self.w('%s.f_%s = %s;' % (self.ex(tg.obj), tg.name, self.val(s.value)))
             elif is_dict(tg.obj.t):
                 self.w('%s.set(%s, %s);' % (self.ex(tg.obj), self.ex(tg.idx), self.val(s.value)))
             else:
-                self.w('$set(%s, %s, %s, %d);' % (self.ex(tg.obj), self.ex(tg.idx), self.val(s.value), s.line))
+                self.w('$set(%s, %s, %s, %s);' % (self.ex(tg.obj), self.ex(tg.idx), self.val(s.value), self.ln(s.line)))
         elif k == 'expr':
             self.w(self.ex(s.e) + ';')
         elif k == 'if':
@@ -331,17 +347,17 @@ class Emitter:
             bits = [json.dumps(p[1], ensure_ascii=False) if p[0] == 's' else '$s(%s)' % self.ex(p[1]) for p in e.parts]
             return '(' + ' + '.join(['""', *bits]) + ')'
         if k == 'name':
-            return self.name(e.name)
+            return self.name(getattr(e, 'full', e.name))
         if k == 'un':
             return '(%s%s)' % ('!' if e.op == 'not' else '-', self.ex(e.e))
         if k == 'bin':
             lhs, r = self.ex(e.l), self.ex(e.r)
             if e.op == '/':
-                return '$div(%s, %s, %d)' % (lhs, r, e.line)
+                return '$div(%s, %s, %s)' % (lhs, r, self.ln(e.line))
             if e.op == '//':
-                return '$fdiv(%s, %s, %d)' % (lhs, r, e.line)
+                return '$fdiv(%s, %s, %s)' % (lhs, r, self.ln(e.line))
             if e.op == '%':
-                return '$mod(%s, %s, %d)' % (lhs, r, e.line)
+                return '$mod(%s, %s, %s)' % (lhs, r, self.ln(e.line))
             if e.op == '+' and e.t == 'sql':
                 return '$sqlcat(%s, %s)' % (lhs, r)
             if e.op == '+' and e.t == 'html':
@@ -352,7 +368,7 @@ class Emitter:
         if k == 'index':
             if is_dict(e.obj.t):
                 return '$get(%s, %s)' % (self.ex(e.obj), self.ex(e.idx))
-            return '$idx(%s, %s, %d)' % (self.ex(e.obj), self.ex(e.idx), e.line)
+            return '$idx(%s, %s, %s)' % (self.ex(e.obj), self.ex(e.idx), self.ln(e.line))
         if k == 'list':
             return '[' + ', '.join(self.val(i) for i in e.items) + ']'
         if k == 'dict':
@@ -364,10 +380,10 @@ class Emitter:
     def call(self, e):
         if e.rec is not None:
             given = {n[0]: n[1] for n in e.named}
-            return 'new R_%s(%s)' % (e.rec.name, ', '.join(self.val(given[f[0]]) for f in e.rec.fields))
+            return 'new R_%s(%s)' % (ident(e.rec.name), ', '.join(self.val(given[f[0]]) for f in e.rec.fields))
         b = e.builtin
         if b is None:
-            return '%s(%s)' % (self.name(e.name), ', '.join(self.arg(a) for a in e.args))
+            return '%s(%s)' % (self.name(getattr(e, 'full', e.name)), ', '.join(self.arg(a) for a in e.args))
         if b == 'sql':
             parts = [
                 json.dumps(p[1], ensure_ascii=False) if p[0] == 's' else '$p(%s)' % self.ex(p[1])
@@ -383,15 +399,15 @@ class Emitter:
             ]
             return 'new $Html(%s)' % ' + '.join(['""', *bits])
         if b == 'serve':
-            return '$serve(%s, %s, (m, p, q, h, b) => new R_Request(m, p, q, h, b), %d)' % (
+            return '$serve(%s, %s, (m, p, q, h, b) => new R_Request(m, p, q, h, b), %s)' % (
                 self.ex(e.args[0]),
                 self.name(e.handler.name),
-                e.line,
+                self.ln(e.line),
             )
         a = [self.ex(x) for x in e.args]
         if b in SIMPLE:
             if b in PERMS:
-                a.append(str(e.line))
+                a.append(self.ln(e.line))
             return '$b_%s(%s)' % (b, ', '.join(a))
         if b == 'secret_equals':
             return '$secret_equals(%s, %s)' % (a[0], a[1])
@@ -404,7 +420,7 @@ class Emitter:
         if b == 'contains':
             return '$contains(%s, %s)' % (a[0], a[1])
         if b == 'slice':
-            return '$slice(%s, %s, %s, %d)' % (a[0], a[1], a[2], e.line)
+            return '$slice(%s, %s, %s, %s)' % (a[0], a[1], a[2], self.ln(e.line))
         if b == 'keys':
             return 'Array.from(%s.keys())' % a[0]
         if b == 'sort':

@@ -25,6 +25,8 @@ KEYWORDS = {
     'continue',
     'record',
     'allow',
+    'use',
+    'pub',
 }
 
 # Arabic keywords, written without hamza (norm() removes it before lookup).
@@ -49,6 +51,8 @@ AR_KEYWORDS = {
     'استمر': 'continue',
     'سجل': 'record',
     'اسمح': 'allow',
+    'استخدم': 'use',
+    'علني': 'pub',
 }
 
 OPS2 = ('==', '!=', '<=', '>=', '->', '//', '??')
