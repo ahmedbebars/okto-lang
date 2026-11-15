@@ -1,0 +1,57 @@
+name: Bug report
+description: Okto gave a wrong result, a wrong error, or crashed.
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. A vulnerability goes in a [private report](https://github.com/ahmedbebars/okto-lang/security/advisories/new), never here.
+  - type: textarea
+    id: program
+    attributes:
+      label: The smallest program that shows the problem
+      description: Paste the `.ok` source. The smaller, the faster it is fixed.
+      render: python
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: The command you ran
+      placeholder: okto run --go bug.ok
+    validations:
+      required: true
+  - type: textarea
+    id: got
+    attributes:
+      label: What happened
+      description: The full output, including any error.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - Node (okto run)
+        - Go (okto run --go or okto build)
+        - Both
+        - The checker (the program does not run)
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: The output of `okto --version`, `python --version`, `node --version` and `go version`, and your system.
+      placeholder: okto 0.4.0, Python 3.12, Node 24, Go 1.27, Windows 11
+    validations:
+      required: true

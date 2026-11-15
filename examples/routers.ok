@@ -1,0 +1,29 @@
+# Find the slow routers and the average ping.
+let names = ["core", "tower-1", "tower-2", "shop"]
+let pings = ["12", "85", "timeout", "40"]
+let limit = 50
+
+fn average(values: list[int]) -> float:
+    if len(values) == 0:
+        return 0.0
+    var total = 0
+    for v in values:
+        total = total + v
+    return total / len(values)
+
+var good: list[int] = []
+var slow: list[text] = []
+var down: list[text] = []
+
+for i in range(len(names)):
+    let ms = to_int(pings[i])      # ms is "int?": it may be none
+    if ms == none:
+        push(down, names[i])
+        continue
+    push(good, ms)                 # here Okto knows ms is a real int
+    if ms > limit:
+        push(slow, names[i])
+
+print("average ping: {average(good)} ms")
+print("slow: {slow}")
+print("no answer: {down}")

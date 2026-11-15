@@ -1,0 +1,16 @@
+# A speed test: count the prime numbers below 3,000,000.
+fn is_prime(n: int) -> bool:
+    if n < 2:
+        return false
+    var i = 2
+    while i * i <= n:
+        if n % i == 0:
+            return false
+        i = i + 1
+    return true
+
+var count = 0
+for n in range(3000000):
+    if is_prime(n):
+        count = count + 1
+print("primes below 3000000: {count}")

@@ -1,0 +1,26 @@
+# The three safety features of Okto 0.4.
+# Run from the project folder:  okto run examples/secure.ok
+
+# 1) Permissions: this program may read ONE folder and ONE environment value.
+#    Anything else stops the program, even if a bug or an attacker asks for it.
+allow read "examples"
+allow env "OKTO_DEMO_PASSWORD"
+
+# 2) Secrets: a secret can be compared, but never printed, logged or written.
+let stored = secret_env("OKTO_DEMO_PASSWORD")
+if stored == none:
+    print("no password is set (set OKTO_DEMO_PASSWORD to try it)")
+else:
+    print("password value:", [stored])                       # shows ***
+    print("is it 'octopus'?", secret_equals(stored, "octopus"))
+
+# 3) Safe queries: values in { } travel apart from the query text,
+#    so a hostile value can never change the query.
+let customer = "x' or 1=1 --"
+let limit = 10
+let q = sql("select * from orders where customer = {customer} limit {limit}")
+print(sql_text_numbered(q))
+print(sql_values(q))
+
+# Permissions in action: this file is outside "examples", so the program stops here.
+print(read_file("README.md") ?? "")

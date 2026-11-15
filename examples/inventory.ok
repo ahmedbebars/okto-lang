@@ -1,0 +1,61 @@
+# Reads a router list from a file, groups it by site, and writes a report.
+# Run from the project folder:  okto run examples/inventory.ok examples/routers.csv
+
+allow read "examples"
+allow write "examples/report.txt"
+
+record Router:
+    name: text
+    site: text
+    ping: int?          # none when the router did not answer
+
+fn parse(line: text) -> Router?:
+    let parts = split(line, ",")
+    if len(parts) != 3:
+        return none
+    return Router(name: trim(parts[0]), site: trim(parts[1]), ping: to_int(parts[2]))
+
+fn load(path: text) -> list[Router]:
+    var result: list[Router] = []
+    let content = read_file(path)
+    if content == none:
+        print("cannot read {path}")
+        return result
+    for line in split(content, "\n"):
+        let r = parse(line)
+        if r != none:
+            push(result, r)
+    return result
+
+let files = args()
+var source = "examples/routers.csv"
+if len(files) > 0:
+    source = files[0]
+
+let routers = load(source)
+var by_site: dict[text, list[text]] = {}
+var down: list[text] = []
+var slowest = ""
+var worst = -1
+
+for r in routers:
+    var names = by_site[r.site] ?? []
+    push(names, r.name)
+    by_site[r.site] = names
+    let ms = r.ping
+    if ms == none:
+        push(down, r.name)
+    else if ms > worst:
+        worst = ms
+        slowest = r.name
+
+var report = "routers: {len(routers)}\n"
+for site in sort(keys(by_site)):
+    let names = by_site[site] ?? []
+    report = report + "{site}: {join(sort(names), ", ")}\n"
+report = report + "slowest: {slowest} ({worst} ms)\n"
+report = report + "no answer: {join(down, ", ")}\n"
+
+print(report)
+if write_file("examples/report.txt", report):
+    print("saved to examples/report.txt")

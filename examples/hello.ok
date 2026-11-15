@@ -1,0 +1,6 @@
+# The first Okto program
+fn greet(name: text) -> text:
+    return "Hello, {name}!"
+
+print(greet("world"))
+print("2 + 3 =", 2 + 3)

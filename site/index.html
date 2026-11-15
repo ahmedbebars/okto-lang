@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://cdn.jsdelivr.net; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>Okto programming language</title>
+  <meta name="description" content="Okto is a small, strict programming language with English and Arabic keywords. It catches the mistake before the program runs and tells you how to fix it.">
+  <meta property="og:title" content="Okto programming language">
+  <meta property="og:description" content="A small, strict language that catches the mistake before the program runs, and tells you how to fix it. English and Arabic keywords.">
+  <meta property="og:type" content="website">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23111827'/%3E%3Ctext x='32' y='44' font-family='Arial' font-size='34' font-weight='700' text-anchor='middle' fill='%2338bdf8'%3Eok%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip" href="#playground">Skip to the playground</a>
+  <header class="top">
+    <a class="brand" href="./"><span class="logo" aria-hidden="true">ok</span> Okto</a>
+    <nav aria-label="Main">
+      <a href="#playground">Playground</a>
+      <a href="https://github.com/ahmedbebars/okto-lang/blob/main/AI-GUIDE.md">Guide</a>
+      <a href="https://github.com/ahmedbebars/okto-lang/blob/main/DESIGN.md">Design</a>
+      <a href="https://github.com/ahmedbebars/okto-lang">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="tag">Version <span data-version>0.4.0</span> · open source · MIT</p>
+      <h1>The mistake is caught before the program runs.<br><span>And the fix comes with it.</span></h1>
+      <p class="lead">Okto is a small, strict programming language with English and Arabic keywords.
+        It compiles to JavaScript and to one native program, and it has safety rules built in.</p>
+      <div class="actions">
+        <a class="button primary" href="#playground">Try it in the browser</a>
+        <a class="button" href="https://github.com/ahmedbebars/okto-lang#quick-start">Install</a>
+      </div>
+      <div class="pair">
+        <figure>
+          <figcaption>English</figcaption>
+          <pre><code>fn total(values: list[int]) -> int:
+    var sum = 0
+    for v in values:
+        sum = sum + v
+    return sum
+
+print("total: {total([90, 75, 60])}")</code></pre>
+        </figure>
+        <figure dir="rtl" lang="ar">
+          <figcaption>العربية</figcaption>
+          <pre><code>دالة مجموع(أرقام: قائمة[عدد]) -> عدد:
+    متغير الناتج = 0
+    لكل رقم في أرقام:
+        الناتج = الناتج + رقم
+    ارجع الناتج
+
+اطبع("المجموع: {مجموع([90، 75، 60])}")</code></pre>
+        </figure>
+      </div>
+    </section>
+
+    <section class="features" aria-labelledby="why">
+      <h2 id="why">Whole families of bugs, removed by the language</h2>
+      <div class="grid">
+        <article><h3>No none surprises</h3><p>Only a type marked <code>?</code> can hold <code>none</code>, and it cannot be used until it is checked.</p></article>
+        <article><h3>No hidden changes</h3><p>Lists, dicts and records are copied on assignment. Two names never share one value.</p></article>
+        <article><h3>Errors that teach</h3><p>Every error has a code, a message and a <code>fix:</code> line, in English or Arabic, and as JSON for tools.</p></article>
+        <article><h3>Permissions</h3><p>A program touches files and environment values only if it says so with <code>allow</code>.</p></article>
+        <article><h3>Secrets stay secret</h3><p>A <code>secret</code> cannot be printed, logged or written, and is compared in constant time.</p></article>
+        <article><h3>No SQL injection</h3><p>A query is its own type. Values travel apart from the query text.</p></article>
+        <article><h3>Two backends, one output</h3><p>Run on Node while you write. Ship one native program built with Go. Every test runs on both.</p></article>
+        <article><h3>Made for AI assistants</h3><p>The whole language fits in one guide, with one way to do each thing and errors a machine can act on.</p></article>
+      </div>
+    </section>
+
+    <section class="play" id="playground" aria-labelledby="play-title">
+      <div class="play-head">
+        <h2 id="play-title">Playground</h2>
+        <p>The real compiler, running in your browser. Nothing is sent to a server.</p>
+      </div>
+      <div class="toolbar">
+        <label>Example
+          <select id="example"><option value="">(your program)</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="arabic"> Arabic messages</label>
+        <span class="spacer"></span>
+        <button type="button" id="share" class="button small">Copy link</button>
+        <button type="button" id="check" class="button small">Check</button>
+        <button type="button" id="run" class="button small primary" title="Ctrl + Enter">Run</button>
+      </div>
+      <div class="panes">
+        <label class="sr" for="editor">Okto program</label>
+        <textarea id="editor" dir="auto" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off"></textarea>
+        <div class="result">
+          <div id="output" role="log" aria-live="polite" aria-label="Output"></div>
+          <p id="status" data-state=""></p>
+        </div>
+      </div>
+      <p class="hint">Files, environment values and secrets need a computer: install Okto to try them.
+        Indent with 4 spaces (the Tab key does it). Ctrl + Enter runs.</p>
+    </section>
+
+    <section class="install" aria-labelledby="install-title">
+      <h2 id="install-title">Install</h2>
+      <p>Python 3.10 or newer, and Node.js 22 or newer to run programs. Go 1.26 or newer to build native programs.</p>
+      <pre><code>pip install git+https://github.com/ahmedbebars/okto-lang
+okto run hello.ok
+okto build hello.ok</code></pre>
+      <p>Or download <code>okto.pyz</code> from the <a href="https://github.com/ahmedbebars/okto-lang/releases/latest">latest release</a> and run <code>python okto.pyz</code>.</p>
+    </section>
+  </main>
+
+  <footer>
+    <p>Okto <span data-version>0.4.0</span> · <a href="https://github.com/ahmedbebars/okto-lang/blob/main/LICENSE">MIT license</a> ·
+      <a href="https://github.com/ahmedbebars/okto-lang/blob/main/CHANGELOG.md">Changelog</a> ·
+      <a href="https://github.com/ahmedbebars/okto-lang/security">Security</a></p>
+  </footer>
+  <script src="playground.js"></script>
+</body>
+</html>

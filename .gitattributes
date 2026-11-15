@@ -1,0 +1,12 @@
+# Keep LF line endings in the repository for every text file.
+* text=auto eol=lf
+
+# Windows scripts need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Okto source files: show them with Python highlighting on GitHub (the syntax is close).
+*.ok text eol=lf linguist-language=Python
+
+# Not counted in the language statistics.
+site/** linguist-documentation

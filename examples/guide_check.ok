@@ -1,0 +1,39 @@
+# The snippets from AI-GUIDE.md, kept here so the guide is always tested.
+let limit = 50
+var total = 0
+let names: list[text] = []
+
+record Router:
+    name: text
+    ping: int?
+
+fn average(values: list[int]) -> float:
+    if len(values) == 0:
+        return 0.0
+    var sum = 0
+    for v in values:
+        sum = sum + v
+    return sum / len(values)
+
+let r = Router(name: "core", ping: 12)
+var count: dict[text, int] = {}
+count[r.name] = (count[r.name] ?? 0) + 1
+
+for i in range(0, 4):
+    if i % 2 == 0:
+        continue
+    print("odd: {i}")
+
+while total < limit:
+    total = total + 1
+
+var routers: list[Router] = []
+push(routers, Router(name: "core", ping: none))
+routers[0].ping = 12
+var d: dict[text, list[int]] = {}
+d["a"] = [1]
+var items = d["a"] ?? []
+push(items, 2)
+d["a"] = items
+
+print(total, len(names), average([1, 2]), count, routers, d)

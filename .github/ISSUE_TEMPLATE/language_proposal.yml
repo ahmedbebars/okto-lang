@@ -1,0 +1,38 @@
+name: Language proposal
+description: Propose a new feature or a change to the language.
+title: "Proposal: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Okto keeps one way to do each thing, so every change is discussed before any code is written.
+        Please read [DESIGN.md](https://github.com/ahmedbebars/okto-lang/blob/main/DESIGN.md) first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not write today, or what is hard to write? Show real code if you can.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: The proposal
+      description: How it would look in an Okto program, in English keywords. An Arabic form is welcome too.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other ways you considered
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: The feature can work the same way on the Node and Go backends.
+          required: true
+        - label: It does not add a second way to do something the language already does.
+          required: true

@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.ruff_cache/
+
+# Okto build output
+*.exe
+*.js
+!site/**/*.js
+*.go
+okto.pyz
+_site/
+
+# Files the examples write
+examples/report.txt
+
+# Editors and systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local assistant settings
+.claude/

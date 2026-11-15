@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "okto-lang"
+dynamic = ["version"]
+description = "A small, strict, bilingual (English/Arabic) programming language that compiles to JavaScript and Go"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "The Okto authors" }]
+keywords = ["programming-language", "compiler", "arabic", "type-checker", "transpiler", "go", "javascript"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Natural Language :: Arabic",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Compilers",
+]
+
+[project.urls]
+Homepage = "https://ahmedbebars.github.io/okto-lang/"
+Documentation = "https://github.com/ahmedbebars/okto-lang/blob/main/AI-GUIDE.md"
+Source = "https://github.com/ahmedbebars/okto-lang"
+Issues = "https://github.com/ahmedbebars/okto-lang/issues"
+Changelog = "https://github.com/ahmedbebars/okto-lang/blob/main/CHANGELOG.md"
+
+[project.scripts]
+okto = "okto.cli:entry"
+
+[tool.setuptools]
+packages = ["okto"]
+
+[tool.setuptools.dynamic]
+version = { attr = "okto.__version__" }
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["site"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "B", "I", "UP", "S", "SIM", "PIE", "RUF"]
+ignore = [
+    "E501",    # long lines: the emitters hold run-time code as long strings
+    "UP031",   # printf-style formatting is used on purpose: the emitters build code full of { }
+    "S603",    # subprocess without a shell: running node, go and built programs is the job
+    "S607",    # starting "node" from PATH is intended
+    "S101",    # assert is used in the tests
+    "SIM108",  # if/else blocks are kept where they read better than a one-line ternary
+    "RUF001",  # Arabic letters in strings are intended
+    "RUF003",  # Arabic letters in comments are intended
+]
+
+[tool.ruff.format]
+quote-style = "single"

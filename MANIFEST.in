@@ -1,0 +1,3 @@
+include AI-GUIDE.md DESIGN.md CHANGELOG.md
+recursive-include tests *.py
+recursive-include examples *.ok *.csv

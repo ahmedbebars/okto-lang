@@ -1,0 +1,17 @@
+# Every line marked below is a mistake that Okto catches BEFORE running.
+let limit = 50
+let name = "tower-1"
+
+limit = 60                         # changing a constant
+print("limit: " + limit)           # joining a text with a number
+print(nmae)                        # a typo in a name
+
+let ms = to_int("85")
+if ms > limit:                     # ms may be none
+    print("slow")
+
+fn double(x: int) -> int:
+    if x > 0:
+        return x * 2               # no return when x <= 0
+
+print(double("4"))                 # a text where a number is needed

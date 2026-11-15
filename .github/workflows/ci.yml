@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.x"
+          cache: false
+      - name: Install Ruff
+        run: python -m pip install --require-hashes --no-deps -r .github/requirements/lint.txt
+      - name: Ruff lint
+        run: ruff check --output-format=github .
+      - name: Ruff format
+        run: ruff format --check --diff .
+      - name: Lint the workflows
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -color
+
+  test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.14"]
+        include:
+          # The oldest supported Node and Go, on the oldest Python.
+          - os: ubuntu-latest
+            python: "3.10"
+            node: "22"
+            go: "1.26.x"
+          - os: ubuntu-latest
+            python: "3.11"
+          - os: ubuntu-latest
+            python: "3.12"
+          - os: ubuntu-latest
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node || '24' }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go || '1.27.x' }}
+          cache: false
+      - name: Versions
+        run: |
+          python --version
+          node --version
+          go version
+      - name: Language tests (Node and Go)
+        run: python tests/run_tests.py --require-go
+      - name: Command-line and example tests
+        run: python tests/test_cli.py --require-go
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install the build tools
+        run: python -m pip install --require-hashes -r .github/requirements/build.txt
+      - name: Build the wheel and the source archive
+        run: python -m build --no-isolation
+      - name: Build okto.pyz
+        run: python tools/build_pyz.py dist/okto.pyz
+      - name: Install the wheel in a clean environment and use it
+        run: |
+          python -m venv /tmp/okto-env
+          /tmp/okto-env/bin/python -m pip install --no-deps dist/*.whl
+          cd "$RUNNER_TEMP"
+          /tmp/okto-env/bin/okto --version
+          /tmp/okto-env/bin/okto run "$GITHUB_WORKSPACE/examples/hello.ok"
+      - name: Use okto.pyz
+        run: |
+          python dist/okto.pyz --version
+          python dist/okto.pyz check examples/routers.ok
+      - name: The version matches everywhere
+        run: |
+          version=$(python -c "import okto; print(okto.__version__)")
+          ls "dist/okto_lang-$version-py3-none-any.whl" "dist/okto_lang-$version.tar.gz"
+          grep -q "^## \[$version\]" CHANGELOG.md
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  site:
+    name: Website
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Build the website
+        run: python tools/build_site.py _site
+      - name: Check the scripts parse
+        run: |
+          node --check _site/playground.js
+          node --input-type=module --check < _site/worker.js
+      - name: Check every page link points to a file that exists
+        run: python tools/check_site.py _site
+
+  all-green:
+    name: All checks passed
+    if: always()
+    needs: [lint, test, package, site]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job must succeed
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: exit 1
+      - name: Done
+        run: echo "lint, tests, package and website all passed"
